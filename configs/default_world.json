@@ -1,0 +1,35 @@
+{
+  "name": "default",
+  "world": {
+    "width": 80,
+    "height": 60
+  },
+  "resources": {
+    "initial_count": 50,
+    "respawn_delay_ticks": 300,
+    "spawn_weights": {
+      "WOOD": 1.0,
+      "WATER": 1.0,
+      "METAL": 1.0,
+      "FIRE": 1.0,
+      "EARTH": 1.0
+    }
+  },
+  "hazards": {
+    "initial_count": 20,
+    "spawn_weights": {
+      "WOOD": 1.0,
+      "WATER": 1.0,
+      "METAL": 1.0,
+      "FIRE": 1.0,
+      "EARTH": 1.0
+    }
+  },
+  "taobots": {
+    "initial_count": 20,
+    "target_population": 20
+  },
+  "chemistry": {
+    "degrade_rate": 0.001
+  }
+}
