@@ -4,4 +4,4 @@ pytest-cov
 ruff>=0.4
 black>=24.0
 mypy>=1.10
-pygame-stubs
+# pygame-stubs not available on PyPI; mypy uses ignore_missing_imports
