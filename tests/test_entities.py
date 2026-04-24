@@ -69,4 +69,4 @@ def test_hazard_damage_element_defaults_to_element_type():
 
 def test_hazard_default_damage():
     h = Hazard(x=0.0, y=0.0, element_type=ElementType.WATER, entity_id=1)
-    assert h.damage_per_tick == pytest.approx(5.0)
+    assert h.damage_per_tick == pytest.approx(1.0)

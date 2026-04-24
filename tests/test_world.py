@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from common import ElementType
@@ -8,7 +10,7 @@ def test_world_config_from_json(default_config):
     assert default_config.name == "default"
     assert default_config.width == 80
     assert default_config.height == 60
-    assert default_config.resources.initial_count == 50
+    assert default_config.resources.initial_count == 150
     assert default_config.hazards.initial_count == 20
     assert default_config.taobots.initial_count == 20
 
@@ -28,7 +30,7 @@ def test_world_config_missing_key(tmp_path):
 
 
 def test_world_initialize_spawns_entities(small_world):
-    assert len(small_world.resources) == 50
+    assert len(small_world.resources) == 150
     assert len(small_world.hazards) == 20
     assert len(small_world.taobots) == 20
 
@@ -81,7 +83,7 @@ def test_world_taobot_death_triggers_respawn(default_config):
         world.spawn_taobot()
     dying = world.spawn_taobot(x=5.0, y=5.0)
     dying_id = dying.entity_id
-    dying.health = 0.0
+    dying.organs[ElementType.WOOD] = 0.0
 
     world._check_taobot_deaths()
 
@@ -107,6 +109,21 @@ def test_spatial_hash_deregister():
     assert 1 not in near
 
 
+def test_world_death_callback_fires(default_config):
+    world = World(default_config)
+    for _ in range(default_config.taobots.target_population - 1):
+        world.spawn_taobot()
+    dying = world.spawn_taobot(x=5.0, y=5.0)
+    dying_id = dying.entity_id
+
+    fired: list[int] = []
+    world.on_taobot_death = lambda t: fired.append(t.entity_id)
+    dying.organs[ElementType.WOOD] = 0.0
+    world._check_taobot_deaths()
+
+    assert dying_id in fired
+
+
 def test_spatial_hash_move():
     sh = SpatialHash(80, 60)
     sh.register(1, 10.0, 10.0)
@@ -115,3 +132,35 @@ def test_spatial_hash_move():
     near_new = sh.neighbors(50.0, 50.0, 5.0, 80, 60)
     assert 1 not in near_old
     assert 1 in near_new
+
+
+def test_cluster_affinity_parsed_from_config(default_config):
+    assert default_config.resources.cluster_affinity[ElementType.METAL] == pytest.approx(1.5)
+    assert default_config.resources.cluster_affinity[ElementType.FIRE] == pytest.approx(0.0)
+    assert default_config.hazards.cluster_affinity[ElementType.WATER] == pytest.approx(1.0)
+
+
+def test_cluster_affinity_defaults_to_zero(tmp_path):
+    cfg = {
+        "name": "x", "world": {"width": 80, "height": 60},
+        "resources": {"initial_count": 1, "respawn_delay_ticks": 60,
+                      "spawn_weights": {"WOOD": 1.0, "WATER": 1.0, "METAL": 1.0,
+                                        "FIRE": 1.0, "EARTH": 1.0}},
+        "hazards": {"initial_count": 0,
+                    "spawn_weights": {"WOOD": 1.0, "WATER": 1.0, "METAL": 1.0,
+                                      "FIRE": 1.0, "EARTH": 1.0}},
+        "taobots": {"initial_count": 1, "target_population": 1},
+        "chemistry": {"degrade_rate": 0.001},
+    }
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps(cfg))
+    wc = WorldConfig.from_json(p)
+    for e in ElementType:
+        assert wc.resources.cluster_affinity[e] == pytest.approx(0.0)
+
+
+def test_spawn_resource_explicit_coords_bypass_clustering(default_config):
+    world = World(default_config)
+    r = world.spawn_resource(x=10.0, y=20.0, element_type=ElementType.METAL)
+    assert r.x == pytest.approx(10.0)
+    assert r.y == pytest.approx(20.0)

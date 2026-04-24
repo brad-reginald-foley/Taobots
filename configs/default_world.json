@@ -5,14 +5,21 @@
     "height": 60
   },
   "resources": {
-    "initial_count": 50,
-    "respawn_delay_ticks": 300,
+    "initial_count": 150,
+    "respawn_delay_ticks": 60,
     "spawn_weights": {
       "WOOD": 1.0,
       "WATER": 1.0,
       "METAL": 1.0,
       "FIRE": 1.0,
       "EARTH": 1.0
+    },
+    "cluster_affinity": {
+      "FIRE": 0.0,
+      "WOOD": 0.5,
+      "EARTH": 0.8,
+      "WATER": 1.0,
+      "METAL": 1.5
     }
   },
   "hazards": {
@@ -23,6 +30,13 @@
       "METAL": 1.0,
       "FIRE": 1.0,
       "EARTH": 1.0
+    },
+    "cluster_affinity": {
+      "FIRE": 0.0,
+      "WOOD": 0.5,
+      "EARTH": 0.8,
+      "WATER": 1.0,
+      "METAL": 1.5
     }
   },
   "taobots": {

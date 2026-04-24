@@ -46,22 +46,22 @@ WHITE: tuple[int, int, int] = (255, 255, 255)
 DIM_WHITE: tuple[int, int, int] = (180, 180, 180)
 
 ELEMENT_COLOR: dict[ElementType, tuple[int, int, int]] = {
-    ElementType.WOOD:  (139, 69,  19),
-    ElementType.WATER: (30,  80, 220),
+    ElementType.WOOD:  (60,  160,  40),
+    ElementType.WATER: (30,   80, 220),
     ElementType.METAL: (192, 192, 192),
-    ElementType.FIRE:  (255, 80,  10),
-    ElementType.EARTH: (120, 100,  20),
+    ElementType.FIRE:  (255,  80,  10),
+    ElementType.EARTH: (210, 180,  30),
 }
 
 TAOBOT_COLOR: tuple[int, int, int] = (0, 220, 120)
 TAOBOT_FLEE_COLOR: tuple[int, int, int] = (220, 220, 0)
 
 ELEMENT_RESOURCE_NAME: dict[ElementType, str] = {
-    ElementType.WOOD:  "Timber",
-    ElementType.WATER: "Spring",
-    ElementType.METAL: "Ore",
-    ElementType.FIRE:  "Ember",
-    ElementType.EARTH: "Loam",
+    ElementType.WOOD:  "Wood",
+    ElementType.WATER: "Water",
+    ElementType.METAL: "Metal",
+    ElementType.FIRE:  "Fire",
+    ElementType.EARTH: "Earth",
 }
 
 ELEMENT_HAZARD_NAME: dict[ElementType, str] = {
