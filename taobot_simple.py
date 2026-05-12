@@ -5,6 +5,8 @@ import math
 import random
 from typing import TYPE_CHECKING
 
+from body_factory import BodyFactory
+from body_parts import BodyPart, LegPart
 from common import ELEMENT_LIST, ElementType
 from math_utils import torus_direction, torus_distance, wrap_position
 
@@ -66,6 +68,14 @@ DEFAULT_PARAMS: dict = {
     "collect_radius": 1.0,
     "flee_wood_threshold": 25.0,
     "random_walk_turn_rate": 0.4,
+    # Phase 2 body parts. Two symmetric legs at ±0.4 rad, both pushing forward (phi=0).
+    # With phi=0 each leg contributes exactly T to forward speed → T_base = speed/2 = 0.75.
+    # max_thrust=1.5 covers the fastest archetype (wanderer speed=2.2, T_base=1.1)
+    # and leaves headroom for differential steering corrections.
+    "body": [
+        {"type": "leg", "r": 1.5, "theta":  0.4, "phi": 0.0, "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+        {"type": "leg", "r": 1.5, "theta": -0.4, "phi": 0.0, "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+    ],
 }
 
 # Archetypes — cycled evenly at world initialization
@@ -109,6 +119,12 @@ def _merge_params(overrides: dict | None) -> dict:
         else:
             merged[k] = v
     return merged
+
+
+def _angle_diff(a: float, b: float) -> float:
+    """Signed angular difference (a − b) wrapped to (−π, π]."""
+    d = (a - b) % (2 * math.pi)
+    return d - 2 * math.pi if d > math.pi else d
 
 
 class TaobotSimple:
@@ -173,6 +189,23 @@ class TaobotSimple:
         # Organs — all start at full integrity
         self.organs: dict[ElementType, float] = {e: ORGAN_MAX for e in ELEMENT_LIST}
 
+        # Phase 2 body parts
+        self.body_parts: list[BodyPart] = BodyFactory.make_parts(p["body"])
+        self.legs: list[LegPart] = [bp for bp in self.body_parts if isinstance(bp, LegPart)]
+
+        # Steering geometry derived from leg layout (phi-aware)
+        self._desired_heading: float = self.heading
+        self._moment_of_inertia: float = sum(leg.r ** 2 for leg in self.legs)
+        # Leverage = r * sin(phi - theta): torque produced per unit thrust, signed
+        self._sum_leverage_sq: float = sum(
+            (leg.r * math.sin(leg.phi - leg.theta)) ** 2 for leg in self.legs
+        )
+        # Max turn rate: all legs at ±max_thrust, signs chosen to maximise torque
+        self.max_turn_rate: float = (
+            sum(leg.r * leg.max_thrust * abs(math.sin(leg.phi - leg.theta)) for leg in self.legs)
+            / max(1e-9, self._moment_of_inertia)
+        )
+
         # Storage and collection state
         self.storage: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
         self.behavior_state: str = "searching"
@@ -192,10 +225,11 @@ class TaobotSimple:
     # --- Main tick ---
 
     def tick(self, world: "World") -> None:
-        """Advance this taobot by one simulation tick: sense, decide, act, metabolize, cycle."""
+        """Advance this taobot by one simulation tick: sense, decide, act, body, metabolize, cycle."""
         nearby_resources, nearby_hazards = self._sense(world)
         self._decide(nearby_resources, nearby_hazards, world)
         self._act(world)
+        self._tick_body_parts()
         self._metabolize()
         self._cycle_elements()
         self.age_ticks += 1
@@ -234,9 +268,9 @@ class TaobotSimple:
                 nearest = nearby_hazards[0]
                 dx, dy = torus_direction(nearest.x, nearest.y, self.x, self.y, ww, wh)
                 if dx != 0.0 or dy != 0.0:
-                    self.heading = math.atan2(dy, dx)
+                    self._desired_heading = math.atan2(dy, dx)
             else:
-                self.heading += random.uniform(-0.3, 0.3)
+                self._desired_heading += random.uniform(-0.3, 0.3)
             self.target_entity_id = None
             return
 
@@ -250,7 +284,7 @@ class TaobotSimple:
             self.behavior_state = "fleeing"
             dx, dy = torus_direction(nearest.x, nearest.y, self.x, self.y, ww, wh)
             if dx != 0.0 or dy != 0.0:
-                self.heading = math.atan2(dy, dx)
+                self._desired_heading = math.atan2(dy, dx)
             self.target_entity_id = None
             return
 
@@ -258,8 +292,8 @@ class TaobotSimple:
         if self.organs[ElementType.FIRE] < FIRE_LOCKOUT_THRESHOLD:
             self.behavior_state = "searching"
             self.target_entity_id = None
-            self.heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
-            self.heading %= 2 * math.pi
+            self._desired_heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
+            self._desired_heading %= 2 * math.pi
             return
 
         # Step 3: COLLECTION CHECK — adjacent to current target?
@@ -288,22 +322,34 @@ class TaobotSimple:
                 self.target_entity_id = best_resource.entity_id
                 dx, dy = torus_direction(self.x, self.y, best_resource.x, best_resource.y, ww, wh)
                 if dx != 0.0 or dy != 0.0:
-                    self.heading = math.atan2(dy, dx)
+                    self._desired_heading = math.atan2(dy, dx)
                 return
 
         # Step 5: SEARCH — random walk
         self.behavior_state = "searching"
         self.target_entity_id = None
-        self.heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
-        self.heading %= 2 * math.pi
+        self._desired_heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
+        self._desired_heading %= 2 * math.pi
 
     # --- Act ---
 
     def _act(self, world: "World") -> None:
-        """Execute the current behavior: collect from target resource or move along heading.
+        """Execute the current behavior: steer, collect, or move.
 
-        Movement speed is scaled by Water organ integrity — degraded locomotion
-        means slower movement; at zero Water the bot cannot move at all."""
+        Steering uses differential thrust allocation: each leg's phi determines its
+        torque leverage and the general controller distributes thrust corrections to
+        achieve the desired turn without a separate lateral-thrust axis.
+        """
+        n = len(self.legs)
+        for leg in self.legs:
+            leg.set_thrust(0.0)
+
+        # Turn rate cap: advance heading toward desired at most max_turn_rate per tick
+        diff = _angle_diff(self._desired_heading, self.heading)
+        turn = max(-self.max_turn_rate, min(self.max_turn_rate, diff))
+        self.heading = (self.heading + turn) % (2 * math.pi)
+
+        collecting = False
         if self.behavior_state == "collecting" and self.target_entity_id is not None:
             resource = world._resources.get(self.target_entity_id)
             if resource is not None and resource.is_alive:
@@ -319,14 +365,28 @@ class TaobotSimple:
                     self.resources_collected += actual
                     self.resources_by_element[elem] += actual
                     self._interval_resources[elem] += actual
+                    collecting = True
             else:
                 self.target_entity_id = None
                 self.behavior_state = "searching"
-        else:
-            water_frac = self.organs[ElementType.WATER] / ORGAN_MAX
-            effective_speed = self.speed * water_frac
-            dx = math.cos(self.heading) * effective_speed
-            dy = math.sin(self.heading) * effective_speed
+
+        if n > 0:
+            # T_base=0 when collecting: differential correction produces pure rotation
+            # (~zero net force for bilateral symmetric bodies) so the bot steers in place.
+            t_base = 0.0 if collecting else self.speed / n
+            if self._sum_leverage_sq > 1e-9:
+                for leg in self.legs:
+                    leverage = leg.r * math.sin(leg.phi - leg.theta)
+                    correction = turn * self._moment_of_inertia * leverage / self._sum_leverage_sq
+                    leg.set_thrust(t_base + correction)
+            else:
+                for leg in self.legs:
+                    leg.set_thrust(t_base)
+
+        if not collecting:
+            net_fx = sum(leg.force_vector(self.heading)[0] for leg in self.legs)
+            net_fy = sum(leg.force_vector(self.heading)[1] for leg in self.legs)
+            dx, dy = net_fx, net_fy
             self.distance_moved += math.sqrt(dx * dx + dy * dy)
             new_x, new_y = wrap_position(
                 self.x + dx, self.y + dy, world.config.width, world.config.height
@@ -334,6 +394,15 @@ class TaobotSimple:
             self.x = new_x
             self.y = new_y
             world._taobot_hash.register(self.entity_id, self.x, self.y)
+
+    # --- Body parts ---
+
+    def _tick_body_parts(self) -> None:
+        """Replenish each body part's reserve from taobot storage, then tick it."""
+        for part in self.body_parts:
+            absorbed = part.replenish(self.storage[part.element])
+            self.storage[part.element] -= absorbed
+            part.tick()
 
     # --- Metabolize ---
 
@@ -357,11 +426,9 @@ class TaobotSimple:
 
         Earth organ integrity sets a global drain multiplier: at full Earth all
         drains are normal; at zero Earth all drains double. This multiplier applies
-        to all five organs, including Earth itself (the cascade spiral).
+        to Fire, Earth, Wood, and Metal organs.
 
-        Water drain is further scaled by current locomotion fraction — an immobile
-        bot expends no locomotion energy. Wood and Metal have low base rates
-        (structural maintenance and armor upkeep) but degrade normally from starvation.
+        Water storage is consumed by LegParts (in _tick_body_parts) and is not drained here.
 
         Wood crisis: if Earth is critically low AND total storage is nearly empty,
         systemic metabolic failure directly damages the Wood organ on top of starvation."""
@@ -372,11 +439,7 @@ class TaobotSimple:
             ORGAN_STORAGE_DRAIN["FIRE"] * earth_mult,
         )
 
-        water_frac = self.organs[ElementType.WATER] / ORGAN_MAX
-        self._drain_organ(
-            ElementType.WATER,
-            ORGAN_STORAGE_DRAIN["WATER"] * water_frac * earth_mult,
-        )
+        # Water storage is now drained by LegParts in _tick_body_parts(); no abstract drain here.
 
         self._drain_organ(
             ElementType.EARTH,
@@ -473,4 +536,17 @@ class TaobotSimple:
             "resources_by_element": {e.name: self.resources_by_element[e] for e in ELEMENT_LIST},
             "distance_moved": self.distance_moved,
             "damage_taken_total": self.damage_taken_total,
+            "legs": [
+                {
+                    "index": i,
+                    "theta_deg": round(math.degrees(leg.theta), 1),
+                    "phi_deg": round(math.degrees(leg.phi), 1),
+                    "reserve": round(leg.reserve, 3),
+                    "capacity": leg.capacity,
+                    "integrity": round(leg.structural_integrity, 3),
+                    "thrust": round(leg._thrust, 4),
+                    "max_thrust": leg.max_thrust,
+                }
+                for i, leg in enumerate(self.legs)
+            ],
         }

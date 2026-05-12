@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from taobot_simple import TaobotSimple
 
 DEFAULT_CONFIG = "configs/default_world.json"
+WORKSHOP_CONFIG = "configs/workshop.json"
 
 
 
@@ -182,6 +183,74 @@ class MetricsLogger:
 
 
 # ---------------------------------------------------------------------------
+# Workshop logger
+# ---------------------------------------------------------------------------
+
+class WorkshopLogger:
+    """Writes one CSV row per tick for the single bot in workshop mode.
+
+    Columns capture full individual state: organs, storage, behavior, position,
+    per-tick resource intake per element, per-tick damage, and per-leg body part state."""
+
+    _BASE_COLUMNS = [
+        "tick", "entity_id", "archetype", "age_ticks", "behavior_state",
+        "x", "y",
+        "organ_WOOD", "organ_FIRE", "organ_WATER", "organ_EARTH", "organ_METAL",
+        "storage_WOOD", "storage_FIRE", "storage_WATER", "storage_EARTH", "storage_METAL",
+        "intake_WOOD", "intake_FIRE", "intake_WATER", "intake_EARTH", "intake_METAL",
+        "tick_damage",
+        "resources_collected", "distance_moved", "damage_taken_total",
+    ]
+
+    def __init__(self, world_name: str, n_legs: int = 0) -> None:
+        from common import ELEMENT_LIST
+        self._elements = ELEMENT_LIST
+        self._n_legs = n_legs
+        leg_cols = [
+            f"leg_{i}_{field}"
+            for i in range(n_legs)
+            for field in ("reserve", "integrity", "thrust")
+        ]
+        columns = self._BASE_COLUMNS + leg_cols
+        Path("logs").mkdir(exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+        self._path = Path("logs") / f"{world_name}_workshop_{ts}.csv"
+        self._file = open(self._path, "w", newline="")
+        self._writer = csv.DictWriter(self._file, fieldnames=columns)
+        self._writer.writeheader()
+        print(f"Workshop log: {self._path}")
+
+    def log_tick(self, taobot: "TaobotSimple", tick: int) -> None:
+        row: dict = {
+            "tick": tick,
+            "entity_id": taobot.entity_id,
+            "archetype": taobot.archetype,
+            "age_ticks": taobot.age_ticks,
+            "behavior_state": taobot.behavior_state,
+            "x": round(taobot.x, 2),
+            "y": round(taobot.y, 2),
+            "resources_collected": round(taobot.resources_collected, 3),
+            "distance_moved": round(taobot.distance_moved, 3),
+            "damage_taken_total": round(taobot.damage_taken_total, 3),
+            "tick_damage": round(taobot._interval_damage, 4),
+        }
+        for e in self._elements:
+            row[f"organ_{e.name}"] = round(taobot.organs[e], 3)
+            row[f"storage_{e.name}"] = round(taobot.storage[e], 3)
+            row[f"intake_{e.name}"] = round(taobot._interval_resources[e], 4)
+        for i, leg in enumerate(taobot.legs):
+            row[f"leg_{i}_reserve"]   = round(leg.reserve, 4)
+            row[f"leg_{i}_integrity"] = round(leg.structural_integrity, 4)
+            row[f"leg_{i}_thrust"]    = round(leg._thrust, 4)
+        self._writer.writerow(row)
+        self._file.flush()
+        taobot.reset_interval()
+
+    def close(self) -> None:
+        self._file.close()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -189,6 +258,8 @@ def parse_args() -> argparse.Namespace:
     """Parse command-line arguments. See README for full documentation."""
     parser = argparse.ArgumentParser(description="Taobots simulation")
     parser.add_argument("--headless", action="store_true", help="Run without display at max speed")
+    parser.add_argument("--workshop", action="store_true",
+                        help="Open Lao Tzu's Workshop (single-bot sandbox, tick-by-tick)")
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to world config JSON")
     parser.add_argument("--duration", type=float, default=0.0,
                         help="Wall-clock seconds to run (headless only; 0 = infinite)")
@@ -289,6 +360,113 @@ def run_visual(world: World, config: WorldConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Workshop mode — Lao Tzu's Workshop
+# ---------------------------------------------------------------------------
+
+def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
+    """Single-bot sandbox with tick-by-tick stepping and full state inspector.
+
+    Controls:
+      N / Right    — step one tick (stays paused)
+      R            — toggle slow run (~2 ticks/sec)
+      Space        — pause / unpause at target FPS
+      Up / Down    — adjust target FPS
+      G            — toggle grid
+      Esc / Q      — quit
+    """
+    import pygame
+
+    from common import PANEL_W, WINDOW_H, WINDOW_W, ElementType
+    from renderer import Renderer
+
+    _SLOW_FPS = 2
+
+    pygame.init()
+    pygame.font.init()
+    screen = pygame.display.set_mode((WINDOW_W + PANEL_W, WINDOW_H))
+    pygame.display.set_caption("Lao Tzu's Workshop")
+    clock = pygame.time.Clock()
+    renderer = Renderer(
+        screen,
+        world_w=config.width,
+        world_h=config.height,
+        workshop=True,
+    )
+
+    selected_id: int | None = next(iter(world._taobots), None)
+    n_legs = len(world._taobots[selected_id].legs) if selected_id is not None else 0
+    ws_logger = WorkshopLogger(config.name, n_legs=n_legs)
+    paused = True
+    slow_run = False
+    target_fps = 3
+    slider_dragging = False
+
+    running = True
+    while running:
+        step_once = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                    running = False
+                elif event.key == pygame.K_SPACE:
+                    paused = not paused
+                    slow_run = False
+                elif event.key in (pygame.K_n, pygame.K_RIGHT):
+                    step_once = True
+                elif event.key == pygame.K_r:
+                    slow_run = not slow_run
+                    paused = not slow_run
+                elif event.key == pygame.K_g:
+                    renderer.toggle_grid()
+                elif event.key == pygame.K_UP:
+                    target_fps = min(target_fps + 5, 120)
+                elif event.key == pygame.K_DOWN:
+                    target_fps = max(target_fps - 5, 5)
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mx, my = event.pos
+                if renderer.pause_button_rect.collidepoint(mx, my):
+                    paused = not paused
+                    slow_run = False
+                elif renderer.speed_slider_rect.collidepoint(mx, my):
+                    slider_dragging = True
+                    target_fps = renderer.fps_from_mouse_x(mx)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                slider_dragging = False
+            elif event.type == pygame.MOUSEMOTION:
+                if slider_dragging:
+                    target_fps = renderer.fps_from_mouse_x(event.pos[0])
+
+        if step_once or (not paused):
+            world.tick()
+            if step_once:
+                paused = True
+                slow_run = False
+            # Re-acquire bot if it respawned
+            if selected_id not in world._taobots:
+                selected_id = next(iter(world._taobots), None)
+            taobots = world.taobots
+            if taobots:
+                wood_vals = [t.organs[ElementType.WOOD] for t in taobots]
+                renderer.push_organ_sample(
+                    sum(wood_vals) / len(wood_vals), min(wood_vals), max(wood_vals)
+                )
+                if selected_id is not None and selected_id in world._taobots:
+                    ws_logger.log_tick(world._taobots[selected_id], world.tick_count)
+
+        fps = clock.get_fps()
+        effective_fps = _SLOW_FPS if slow_run else target_fps
+        renderer.render(world, selected_id, fps, target_fps=effective_fps, paused=paused)
+        pygame.display.flip()
+        clock.tick(effective_fps)
+
+    ws_logger.close()
+    pygame.quit()
+
+
+# ---------------------------------------------------------------------------
 # Headless mode
 # ---------------------------------------------------------------------------
 
@@ -342,11 +520,17 @@ def main() -> None:
         random.seed(args.seed)
         # Phase 3+: also seed numpy when introduced
 
-    config = WorldConfig.from_json(args.config)
+    if args.workshop:
+        config = WorldConfig.from_json(WORKSHOP_CONFIG)
+    else:
+        config = WorldConfig.from_json(args.config)
+
     world = World(config)
     world.initialize()
 
-    if args.headless:
+    if args.workshop:
+        run_workshop(world, config)
+    elif args.headless:
         logger = MetricsLogger(config.name)
         run_headless(world, config, args.duration, logger)
     else:

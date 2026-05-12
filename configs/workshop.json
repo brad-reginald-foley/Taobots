@@ -1,0 +1,25 @@
+{
+  "name": "workshop",
+  "world": {"width": 30, "height": 25},
+  "resources": {
+    "initial_count": 15,
+    "respawn_delay_ticks": 30,
+    "spawn_weights": {
+      "WOOD": 1.0, "WATER": 1.0, "METAL": 1.0, "FIRE": 1.0, "EARTH": 1.0
+    },
+    "cluster_affinity": {
+      "WOOD": 0.0, "WATER": 0.0, "METAL": 0.0, "FIRE": 0.0, "EARTH": 0.0
+    }
+  },
+  "hazards": {
+    "initial_count": 10,
+    "spawn_weights": {
+      "WOOD": 1.0, "WATER": 1.0, "METAL": 1.0, "FIRE": 1.0, "EARTH": 1.0
+    },
+    "cluster_affinity": {
+      "WOOD": 0.0, "WATER": 0.0, "METAL": 0.0, "FIRE": 0.0, "EARTH": 0.0
+    }
+  },
+  "taobots": {"initial_count": 1, "target_population": 1},
+  "chemistry": {"degrade_rate": 0.001}
+}

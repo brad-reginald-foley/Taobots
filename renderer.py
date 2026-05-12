@@ -64,6 +64,7 @@ class Renderer:
         window_w: int = WINDOW_W,
         window_h: int = WINDOW_H,
         panel_w: int = PANEL_W,
+        workshop: bool = False,
     ) -> None:
         """Set up fonts, scale factors, and panel geometry."""
         self._screen = screen
@@ -75,6 +76,7 @@ class Renderer:
         self._scale_x = window_w / world_w
         self._scale_y = window_h / world_h
         self._show_grid = False
+        self._workshop = workshop
 
         self._font_sm = pygame.font.SysFont("monospace", 13)
         self._font_md = pygame.font.SysFont("monospace", 15)
@@ -137,7 +139,10 @@ class Renderer:
         if paused:
             self._draw_paused_overlay()
         selected_taobot = world._taobots.get(selected_id) if selected_id is not None else None
-        self._draw_inspector(selected_taobot)
+        if self._workshop:
+            self._draw_workshop_inspector(selected_taobot, world.tick_count)
+        else:
+            self._draw_inspector(selected_taobot)
         self._draw_organ_graph()
         self._draw_pause_button(paused)
         self._draw_speed_slider(target_fps, fps)
@@ -279,6 +284,21 @@ class Renderer:
             color = TAOBOT_FLEE_COLOR if t.behavior_state == "fleeing" else TAOBOT_COLOR
             pygame.draw.circle(self._screen, color, (px, py), 6)
 
+            # Legs — small dots at polar offset (heading + theta), dimmed by structural integrity
+            _LEG_OFFSET_PX = 9  # pixels from body centre to leg dot
+            _WATER_COLOR = ELEMENT_COLOR[ElementType.WATER]
+            for leg in getattr(t, "legs", []):
+                direction = t.heading + leg.theta
+                lx = px + int(math.cos(direction) * _LEG_OFFSET_PX)
+                ly = py + int(math.sin(direction) * _LEG_OFFSET_PX)
+                brightness = leg.structural_integrity
+                leg_color = (
+                    int(_WATER_COLOR[0] * brightness),
+                    int(_WATER_COLOR[1] * brightness),
+                    int(_WATER_COLOR[2] * brightness),
+                )
+                pygame.draw.circle(self._screen, leg_color, (lx, ly), 2)
+
             # Heading line
             hx = px + int(math.cos(t.heading) * 10)
             hy = py + int(math.sin(t.heading) * 10)
@@ -369,6 +389,8 @@ class Renderer:
 
         text("Organs:", bold=True)
         for e in ELEMENT_LIST:
+            if e == ElementType.WATER:
+                continue  # Water is owned by legs — shown below
             organ_val = state["organs"][e.name]
             swatch(ELEMENT_COLOR[e], f"{e.name}: {organ_val:.1f}")
             bar(organ_val, 100.0)
@@ -381,12 +403,127 @@ class Renderer:
             swatch(ELEMENT_COLOR[e], f"{ELEMENT_RESOURCE_NAME[e]}: {amount:.1f}/{cap:.0f}")
 
         y += 4
+        _water_color = ELEMENT_COLOR[ElementType.WATER]
+        text("Legs:", bold=True)
+        for leg in state["legs"]:
+            sign = "+" if leg["theta_deg"] >= 0 else ""
+            text(f"  Leg {leg['index']}  {sign}{leg['theta_deg']:.0f}°  "
+                 f"int:{leg['integrity']:.2f}", _water_color)
+            text(f"    rsv:{leg['reserve']:.2f}/{leg['capacity']:.1f}  "
+                 f"thr:{leg['thrust']:+.3f}  phi:{leg['phi_deg']:.0f}")
+
+        y += 4
         text("Params:", bold=True)
         text(f"Speed: {state['speed']:.1f}  Sense: {state['sensing_range']:.1f}")
         text("Affinities:")
         for e in ELEMENT_LIST:
             aff = state["affinity"][e.name]
             swatch(ELEMENT_COLOR[e], f"{ELEMENT_RESOURCE_NAME[e]}: {aff:.3f}")
+
+    def _draw_compact_bar_row(
+        self,
+        x: int,
+        y: int,
+        color: tuple,
+        name: str,
+        value: float,
+        max_val: float,
+        right_label: str,
+    ) -> None:
+        """Draw [swatch] NAME  [bar] right_label — all on one line."""
+        s = self._screen
+        pygame.draw.rect(s, color, pygame.Rect(x, y + 3, 8, 8))
+        s.blit(self._font_sm.render(f"{name:<5}", True, DIM_WHITE), (x + 12, y))
+        bar_x = x + 51
+        bar_w = 96
+        frac = max(0.0, min(1.0, value / max_val)) if max_val > 0 else 0.0
+        fill = tuple(min(255, int(c * (0.35 + 0.65 * frac))) for c in color)
+        pygame.draw.rect(s, (50, 50, 50), pygame.Rect(bar_x, y + 3, bar_w, 8))
+        pygame.draw.rect(s, fill, pygame.Rect(bar_x, y + 3, int(bar_w * frac), 8))
+        s.blit(self._font_sm.render(right_label, True, DIM_WHITE), (bar_x + bar_w + 4, y))
+
+    def _draw_workshop_inspector(
+        self, taobot: "TaobotSimple | None", tick_count: int
+    ) -> None:
+        """Full-state inspector for Lao Tzu's Workshop — organs, storage, motion, behavior."""
+        x = self._window_w + 8
+        y = 8
+        lh = 16
+        pw = self._panel_w - 16
+
+        def sep() -> None:
+            nonlocal y
+            pygame.draw.line(self._screen, (70, 70, 70), (x, y), (x + pw, y))
+            y += 7
+
+        def txt(msg: str, color: tuple = DIM_WHITE, bold: bool = False) -> None:
+            nonlocal y
+            font = self._font_bold if bold else self._font_sm
+            self._screen.blit(font.render(msg, True, color), (x, y))
+            y += lh
+
+        # Title
+        txt("Lao Tzu's Workshop", (210, 180, 30), bold=True)
+        txt(f"Tick: {tick_count}   [N]=step  [R]=slow")
+        sep()
+
+        if taobot is None:
+            txt("No bot in world")
+            return
+
+        state = taobot.get_state()
+        hdg_deg = math.degrees(state["heading"]) % 360
+
+        txt(f"Bot #{state['entity_id']}  ({taobot.archetype})", WHITE, bold=True)
+        state_colors = {
+            "seeking": (0, 220, 80), "collecting": (0, 255, 60),
+            "fleeing": (220, 220, 0), "searching": (100, 150, 200),
+        }
+        txt(f"State:  {state['behavior_state']}",
+            state_colors.get(state["behavior_state"], DIM_WHITE))
+        txt(f"Age: {state['age_ticks']}   Fit: {state['fitness_score']:.4f}")
+        txt(f"Pos: ({state['x']:.1f}, {state['y']:.1f})   Hdg: {hdg_deg:.0f}°")
+        txt(f"Dist: {state['distance_moved']:.1f}   Dmg: {state['damage_taken_total']:.1f}")
+        y += 3
+
+        sep()
+        txt("Organs", bold=True)
+        for e in ELEMENT_LIST:
+            if e == ElementType.WATER:
+                continue  # Water is owned by legs — shown below
+            val = state["organs"][e.name]
+            self._draw_compact_bar_row(x, y, ELEMENT_COLOR[e], e.name, val, 100.0, f"{val:.1f}")
+            y += lh
+
+        y += 3
+        sep()
+        txt("Storage", bold=True)
+        for e in ELEMENT_LIST:
+            val = state["storage"][e.name]
+            cap = state["storage_capacity"][e.name]
+            self._draw_compact_bar_row(x, y, ELEMENT_COLOR[e], e.name, val, cap,
+                                       f"{val:.1f}/{cap:.0f}")
+            y += lh
+
+        y += 3
+        sep()
+        _wc = ELEMENT_COLOR[ElementType.WATER]
+        txt("Legs", bold=True)
+        for leg in state["legs"]:
+            sign = "+" if leg["theta_deg"] >= 0 else ""
+            txt(f"leg {leg['index']}  θ {sign}{leg['theta_deg']:.0f}°", _wc)
+            self._draw_compact_bar_row(
+                x + 8, y, _wc, "integr",
+                leg["integrity"], 1.0, f"{leg['integrity']:.3f}",
+            )
+            y += lh
+            self._draw_compact_bar_row(
+                x + 8, y, _wc, "resv",
+                leg["reserve"], leg["capacity"],
+                f"{leg['reserve']:.3f}/{leg['capacity']:.1f}",
+            )
+            y += lh
+            txt(f"  thr {leg['thrust']:+.4f}  max {leg['max_thrust']:.2f}  phi {leg['phi_deg']:.0f}deg")
 
     def _draw_organ_graph(self) -> None:
         """Draw the rolling Wood organ graph in the lower panel.
