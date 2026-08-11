@@ -115,7 +115,7 @@ graph LR
 
 ### AD-4 — Conversion belongs to the chi tier
 
-- **Binds:** `MER-14`, `CHI-7`, E1-S2, the Sheng cycle
+- **Binds:** `MER-14`, `CHI-7`, E1 Story 1.2, the Sheng cycle
 - **Prevents:** conversion logic accreting on the organism, where E3 cannot lift it
 - **Rule:** element-to-element conversion, respecting `CYCLE_EFFICIENCY`, is a capability of the chi tier — not a method on `TaobotSimple`. It lands on `ChiPool` and is inherited by `MeridianNetwork` at E3. Any conversion path derives `spent` from `produced` **after** capping on available room, so essence can be lost to efficiency but never manufactured.
 
@@ -189,7 +189,7 @@ graph LR
 
 ### AD-14 — The workshop is a microscope, not a different world
 
-- **Binds:** `configs/workshop.json`, every constant derived in workshop mode, E1-S1…S4
+- **Binds:** `configs/workshop.json`, every constant derived in workshop mode, E1 Stories 1.1–1.4
 - **Prevents:** constants tuned against an environment whose pressures differ from the world they will run in
 - **Rule:** the workshop may differ in size and population — that is what makes it a single-bot sandbox — but the **rates a bot experiences** must match the world being calibrated. Laws are shared by construction (`AD-13`); densities and respawn are aligned deliberately, and any divergence is recorded with its reason.
 
@@ -209,7 +209,7 @@ graph LR
 
 - **Binds:** the organism module, E1–E4, the Phase 3 neural work
 - **Prevents:** a parallel "full" taobot class built alongside the current one, which would require a big-bang cutover that the per-subsystem staging never offers; and a class hierarchy whose split axis (organism type) is orthogonal to the real staging axis (subsystem, one per epic — a hierarchy cannot express "Water is derived but Metal is not yet")
-- **Rule:** there is exactly **one** organism class. Each epic substitutes a subsystem *inside* it, so the class thins rather than being replaced — what remains by Phase 4 (identity, position and heading, the part list, the chi pool, physics integration, tick orchestration, metrics) is arrived at by subtraction. `sense` + `decide` together constitute **control** and are the unit E4 replaces wholesale, per the mechanism-before-control principle in `docs/domain-spec.md`. They stay as methods until a second controller exists, then move behind a controller port; the interface is already narrow — they read sensed lists and world dimensions, and write `_desired_heading`, `behavior_state`, `target_entity_id`. The module is renamed `taobot.py` in E1-S0a, since `TaobotSimple` already owns the organ model and will own a gene-expressed neural organism.
+- **Rule:** there is exactly **one** organism class. Each epic substitutes a subsystem *inside* it, so the class thins rather than being replaced — what remains by Phase 4 (identity, position and heading, the part list, the chi pool, physics integration, tick orchestration, metrics) is arrived at by subtraction. `sense` + `decide` together constitute **control** and are the unit E4 replaces wholesale, per the mechanism-before-control principle in `docs/domain-spec.md`. They stay as methods until a second controller exists, then move behind a controller port; the interface is already narrow — they read sensed lists and world dimensions, and write `_desired_heading`, `behavior_state`, `target_entity_id`. The module is renamed `taobot.py` in E1 Story 1.0a, since `TaobotSimple` already owns the organ model and will own a gene-expressed neural organism.
 
 ## Consistency Conventions
 
@@ -221,7 +221,7 @@ graph LR
 | Positions | Virtual units always (80 × 60 default world). Pixels exist only past the render boundary, via `math_utils.world_to_screen` |
 | Geometry | All distance and direction through `math_utils.torus_*`. The world wraps at every edge, so plain Euclidean math is silently wrong near boundaries |
 | Body geometry | Polar `(r, theta)` from the taobot centre, per `BODY-2` |
-| Ids | `entity_id` — int, world-allocated, runtime. `part_id` — UUID, expression-time. `gene_id` — declarable, genome-space (`AD-9`) |
+| Ids | `entity_id` — int, world-allocated, runtime. `part_id` — expression-time, **deterministically derived from `(run seed, gene id, expression index)`**; never `uuid4()` (`AD-9`, `AD-12`). `gene_id` — declarable, genome-space (`AD-9`) |
 | Chi access | Through the port only (`AD-3`). Never a bare dict mutation |
 | Randomness | Injected `random.Random`; module-level `random.*` is forbidden (`AD-12`) |
 | Config formats | JSON. Element-keyed maps use `ElementType.name` (`"WOOD"`), normalised on load where they are weights |

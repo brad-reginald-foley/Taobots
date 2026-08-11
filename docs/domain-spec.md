@@ -194,6 +194,7 @@ can be built.
 | Q5 | What domains does a gene carry? | GEN-2, BODY-1 | Phase 4 planning session |
 | Q6 | Once the chi pool exists, is `storage` the chi pool, or does chi sit behind meridians as a separate buffer? And does the chi economy stay as methods on `TaobotSimple` (`_drain_organ`, `_metabolize`, `_cycle_elements`) or become a subsystem the taobot owns? | MER-4, MER-13, MER-14, CHI-1, CHI-2 | **Answered 2026-08-10** — architect pass; see below |
 | Q8 | When one gene expresses **several** parts, how does a gene-space reference resolve to runtime parts? Candidates: **symmetry-matched** (the *i*-th expression of the source wires to the *i*-th of the target — needs an expression index on the part), **spatial** (nearest by polar distance), **all-to-all** (combinatorial, almost certainly not). The answer is expected to *change by phase* — explicit lookup while specs are hand-written, spatial once mutation generates body plans nobody wrote, gradient-driven at Phase 6 — so resolution is a replaceable strategy behind one interface rather than a single permanent choice. | MER-9, NEU-9, BODY-6, GEN-2 | **E3 planning** owns the seam; the strategy choice defers to Phase 4/6 |
+| Q9 | Does an organ value stay the **mean** of its parts' structural integrity once damage becomes localized? `AD-5` defines it as a mean, which makes the gauge's sensitivity scale as 1/count: at anticipated part counts (1 body, 4 legs, 32 armor, 64 meridians, 1000 neurons) one destroyed part moves Earth by 100 points and Fire by 0.1. While all degradation is **starvation** — systemic, hitting every part of a system together — a mean tracks it faithfully and this is harmless. It breaks when damage becomes **localized**: a bot visibly losing its shell would read as a ~3-point drop in the Metal organ. Candidates: keep the mean; use the **fraction of parts below a health threshold** (count-insensitive, moves 1:1 with localized loss); or weight by part mass. Note this also governs whether Phase 2 exit criterion 3 ("an organ drops below 50 and recovers above 80") is reachable per organ — it is trivial for Earth and near-impossible for Fire. | ARM-5, LEG-6, STR-2; Phase 2 exit criterion 3 | **Dormant until element-targeted hazard damage or combat lands** — no current path produces localized damage. Armor (E2) is the first system it affects; review at the E3 architect pass |
 
 ---
 
@@ -217,7 +218,7 @@ match, which is real selection pressure.
 
 **The economy becomes a subsystem, reached through a port.** Consumers never mutate a chi dict.
 They call `request(element, amount) -> granted` and `deposit(element, amount) -> accepted`.
-Conversion (`MER-14`, and E1-S2's demand-triggered path) is a capability *of the chi tier*, not of
+Conversion (`MER-14`, and E1 Story 1.2's demand-triggered path) is a capability *of the chi tier*, not of
 `TaobotSimple`.
 
 - **Now:** `ChiPool` owns the ledger and implements the port. Essence conservation becomes a

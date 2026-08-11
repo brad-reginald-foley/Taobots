@@ -68,10 +68,14 @@ This forces two separate ID spaces, which must not be collapsed:
 | Space | What it is | Lifetime |
 |---|---|---|
 | **Gene / spec id** | Stable, declarable, part of the genome. What genes use to reference each other. | Persists in the genome file |
-| **Part id** (UUID) | Assigned when an instruction is expressed into a concrete part. | Runtime only |
+| **Part id** | Assigned when an instruction is expressed into a concrete part. | Runtime only |
 
 A part records which instruction produced it, so provenance runs one way: gene → parts. Because
-expression is one-to-many, a part id can never be derived from a gene id.
+expression is one-to-many, a part id can never be *equal to* a gene id — one gene yields many parts.
+It is nonetheless **deterministically derived** from `(run seed, gene id, expression index)`, not a
+`uuid4()`: `uuid4()` draws from `os.urandom` and no seed can reach it, so a random part id would
+break reproducibility (`AD-12`) the moment it reached a state hash, a log, or any iteration order.
+See `AD-9` in the architecture spine.
 
 **`BodyFactory` is the expression engine, not a constructor.** Its job is two passes: instantiate
 parts from instructions, then resolve the references those instructions declared. Today the body
@@ -214,7 +218,8 @@ separate buffer. This decision gates the meridian subsystem and Phase 4's gene e
 > dead. The Water organ has logged a constant 100.0 in every run to date — it went vestigial when
 > `LegPart` took over locomotion cost. `world.get_stats()` also omits Metal entirely.
 >
-> Story **E1-S0** corrects all three. This table is rewritten when that story lands, not before —
+> E1 **Stories 1.0a and 1.0b** correct all three — 1.0a the swapped roles, 1.0b the dead Water organ
+> and the missing Metal column. This table is rewritten when they land, not before —
 > per the rule above, the plan describes what exists.
 
 Constants in `taobot_simple.py`: `ORGAN_MAX=100`, `ORGAN_DEGRADE_RATE=1.0` (per tick when the
@@ -261,7 +266,7 @@ than a standalone system (`STR-4`, open question **Q3**).
 The meridian network raises genuine architectural questions — graph representation, how junctions
 are declared, update ordering across a network that may contain cycles, and **Q6** (whether the
 chi economy stays as methods on `TaobotSimple` or becomes a subsystem the taobot owns). Convening
-the architect *after* E1 and E2 is deliberate: by then the E1-S1 damage spike has reported, a
+the architect *after* E1 and E2 is deliberate: by then the E1 Story 1.1 damage spike has reported, a
 demand-driven conversion trigger has run in practice, and armor has exercised the damage path — so
 the design is made against evidence rather than intent. Do not start E3 implementation before it.
 
@@ -340,7 +345,7 @@ completion: **Q4** (destructive-cycle rate), **Q6** (storage/chi boundary).
 body_parts.py      BUILT     BodyPart base + LegPart only
 body_factory.py    BUILT     BodyFactory: body spec -> list[BodyPart], stable part IDs
 renderer.py        BUILT     Polar body rendering, organ graph
-taobot_simple.py   BUILT     Organ system lives here; renamed to taobot.py in E1-S0a
+taobot_simple.py   BUILT     Organ system lives here; renamed to taobot.py in E1 Story 1.0a
 chi.py             MISSING   ChiPool, destructive-cycle chemistry tick
 taobot.py          PENDING   Not a second class — taobot_simple.py becomes it by subtraction
 ```
@@ -382,6 +387,13 @@ are starting proposals, to be confirmed at the Phase 3 planning session.
 3. **Degrade and repair both observable** — in a single workshop run, at least one organ drops
    below 50 and recovers above 80 (workshop CSV, `organ_*` columns); each built part's integrity
    shows the same round trip (`leg_*_integrity` and equivalents per epic).
+
+   **The two halves must come from different sources.** Once `AD-5` lands per organ, that organ *is*
+   the mean integrity of its parts — for E1, the Water organ is the mean of leg integrity, so reading
+   both halves off Water would collapse them into a single measurement and silently weaken the
+   criterion. For E1 the organ half is sourced from **Earth (the body)** and the part half from the
+   legs. Each later epic states which organ supplies its organ half. *(Decided 2026-08-11, architect
+   pass; see Story 1.4 in `epic-e1-legs.md`.)*
 4. **Population stability** — 20 taobots run 10 minutes headless with population never below 15
    and no extinction (`<world>_<timestamp>.csv`).
 5. **Workshop completeness** — every organ and part built in E1–E3 is visible in the workshop

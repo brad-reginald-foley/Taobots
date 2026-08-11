@@ -1,10 +1,20 @@
 # E1 Readiness Delta
 
+> **⚠ SUPERSEDED — 2026-08-11.** Everything in this document has been folded into
+> [`epic-e1-legs.md`](epic-e1-legs.md), which is now the single canonical statement of E1.
+> Kept as the record of *what the architect pass changed and why*. **Do not build from it** — where
+> it and the epic differ in wording, the epic is current. Sprint tracking is generated from the epic
+> only.
+
 **Produced by:** architect pass, 2026-08-11 · **Against:** `epic-e1-legs.md` @ `c70ed05`
 **Governed by:** [`ARCHITECTURE-SPINE.md`](architecture/architecture-taobots-2026-08-10/ARCHITECTURE-SPINE.md)
 
 What must change in E1 before a dev agent can execute it without inventing architectural decisions.
 Every item cites the `AD` that forces it.
+
+**Story renumbering.** The epic now uses the `Epic N` / `Story N.M` numbering that sprint tracking
+parses. `E1-S0a` → Story 1.0a, `E1-S0b` → 1.0b, `E1-S0c` → 1.0c, `E1-S0d` → 1.0d, `E1-S1` → 1.1,
+`E1-S2` → 1.2, `E1-S3` → 1.3, `E1-S4` → 1.4.
 
 ---
 
