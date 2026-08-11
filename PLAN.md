@@ -19,6 +19,16 @@ The long-term vision has two halves:
 
 **Prior prototype:** `../element_sim` — pygame, Python, 5-element system, component-based agents, no genetics or learning. Worth reusing: element definitions, torus math, pygame loop scaffold, entity classes.
 
+**Where things are written down:**
+
+| Document | Holds |
+|---|---|
+| `docs/domain-spec.md` | Subsystem requirements with stable IDs (`NEU-3`, `MER-7`) and the open-questions register |
+| `PLAN.md` (this file) | Phase order, scope, and exit criteria — schedules the requirements, does not restate them |
+| `README.md` | How to run what exists today, plus the world's lore |
+
+Phases below cite requirement IDs. When a requirement changes, it changes in `docs/domain-spec.md`.
+
 ---
 
 ## Staging Philosophy
@@ -29,6 +39,22 @@ Build from least to most granular. Each phase:
 - Has **exit criteria** — defined conditions under which the phase is "done enough" to move on
 
 Neurons are before genetics because understanding runtime neural behavior informs what needs to be gene-encoded. Genetics are before developmental encoding because understanding what parameters need to evolve informs how development should work. Developmental encoding is last because it's the most complex and builds on everything below it.
+
+### Phase acceptance
+
+Exit criteria only work if they are checked. Two rules, added 2026-08-10 after Phase 2 drifted
+from its plan without the drift being noticed:
+
+1. **Exit criteria must be measurable** — each one names a metric, a threshold, and the log or
+   command that produces it. "Visibly different" and "feels balanced" are observations, not
+   criteria; they belong in the goal paragraph, not the acceptance list.
+2. **A phase is not complete until its criteria are assessed in writing** — a status table in
+   this file, per criterion, with the evidence. A phase may be *entered* with prior criteria
+   unmet, but that has to be a recorded decision rather than an oversight.
+
+When implementation diverges from the plan — a file that never got built, a subsystem replaced by
+a different design — update this document in the same change. A plan that describes code that
+does not exist is worse than no plan, because it is trusted.
 
 ---
 
@@ -79,35 +105,191 @@ tests/
 
 ## Phase 2: Body Structure + Chi
 
+> **Status as of 2026-08-10: IN PROGRESS.** The organ layer is built and the generative cycle
+> runs. The chi layer, the destructive cycle, and three of four body parts are not built. See
+> [Phase 2 status](#phase-2-status) below before assuming a subsystem exists.
+
 **Goal:** Replace the abstract taobot with a structured body — physical organs in polar coordinates, an internal chi pool with elemental chemistry, resource absorption through organs. Still rule-based behavior (no neural network yet). Introduces the data structures that genetics will later encode.
+
+### The two layers
+
+Phase 2 has two distinct layers that were not separated in the original plan. They are **not**
+alternatives — the final design has both:
+
+**Organ layer — structural integrity.** Five organs, one per element, each holding an integrity
+value (0–100). Organs are what the taobot *is*: they degrade when their governing element runs
+out, regenerate when it is plentiful, and each governs a capability. This layer replaced the
+single scalar health value from Phase 1.
+
+**Chi layer — the circulating elemental resource organs process.** The pool of raw elemental
+substance that organs draw from, convert, and expel. Chi is what flows; organs are what it flows
+through. Meridians (unbuilt) are the transport structures connecting them.
+
+*Open design question for the Phase 3 planning session:* the organ layer currently reads and
+writes `storage` directly. Once the chi pool exists, the boundary between `storage` and `chi`
+must be defined — whether storage becomes the chi pool, or chi sits behind meridians as a
+separate buffer. This decision gates the meridian subsystem and Phase 4's gene encoding.
+
+### Organ layer (built)
+
+| Organ | Governs | Failure behavior |
+|---|---|---|
+| Wood | Body structure | Death condition at 0; damaged by Metal attacks; drives flee threshold |
+| Fire | Nervous system | Scales sensing range; below 20 → locked to searching (random walk only) |
+| Water | Locomotion | Governs speed; at 0 → immobile; drain scales with speed fraction |
+| Earth | Metabolism / meridians | Drain multiplier rises as it degrades; collapse triggers Wood crisis |
+| Metal | Armor | Absorbs incoming damage before Wood takes it |
+
+Constants in `taobot_simple.py`: `ORGAN_MAX=100`, `ORGAN_DEGRADE_RATE=1.0` (per tick when the
+governing element's storage is empty), `ORGAN_REGEN_RATE=0.2` (when storage is above
+`REGEN_STORAGE_THRESHOLD=0.3` of capacity), plus per-organ `ORGAN_STORAGE_DRAIN` rates.
+
+**Generative (Sheng) cycle — built.** Each element converts `CYCLE_RATE=0.001` of its storage
+into the next element in the productive cycle each tick, at `CYCLE_EFFICIENCY=0.8` (20% lost per
+step). All five transfers compute simultaneously from pre-tick values to avoid directional bias.
+
+### Chi layer — constructive path only, by design
+
+Organs exist to push chi through a system of conversion and use. **For now only the constructive
+(Sheng) path is modelled.** This is a deliberate staging decision, not missing work: the organs
+that consume and convert chi are being built one at a time, and adding destructive chemistry
+before they exist would make it impossible to tell which system caused a given behavior.
+
+**Destructive (Ke) cycle — deferred.** `degrade_rate` is present in every world config and parsed
+into `WorldConfig`, but deliberately not consumed. It is the most sensitive balance parameter:
+too high and taobots die of internal imbalance, too low and element composition carries no
+evolutionary pressure. It lands once the organ epics are complete and there is a stable baseline
+to perturb. Insertion point is marked at `world.py:282`.
+
+**Chi pool:** `dict[ElementType, float]` with a capacity cap. Whether this is the existing
+`storage` or a separate buffer behind meridians is open question **Q6**.
+
+### Build method: one organ system per epic
+
+Organs are abstractions at this stage, so build order follows **difficulty and dependency, not
+the elemental cycle**. Each organ system is an epic covering design, implementation, integration,
+and testing — carried to working, verified behavior before the next one starts.
+
+| # | Epic | Element | Phase | Status | Why here |
+|---|---|---|---|---|---|
+| E1 | **Legs** | Water | 2 | **In progress** | Locomotion is the visible output; everything else is verified by watching a bot move |
+| E2 | **Armor** | Metal | 2 | Next | Simplest and largely passive — wear, damage absorption. Banks a quick win and proves the epic workflow end to end |
+| E3 | **Meridians** | Wood | 2 | Planned | Chi transport and junctions. Built directly before neurons so the gate design is freshest when wiring begins |
+| E4 | **Neurons** | Fire | 3 | Planned | Last, because it is the integration layer — see below |
+
+**Earth/body is not its own epic.** It behaves as a cost factor required by the other parts rather
+than a standalone system (`STR-4`, open question **Q3**).
+
+**Why neurons last.** Neurons are not merely the hardest system, they are the one that *integrates
+the others*. Everything hinges on their spatial order, how they sense the internal environment,
+and how they modulate organ function. A worked example of the target behavior: an eye dendrite
+feeds a circuit that thresholds on colour intensity — above the threshold it drives legs away
+from a pyre, below it drives coordinated movement toward a carrot. Another neuron senses the Earth
+organ running low and opens a gate converting Fire chi to Earth. Neither circuit can be designed
+against organs that do not exist yet, and building them early would mean wiring to stubs and
+rewiring on every subsequent epic.
+
+### Epic definition of done
+
+An organ epic is complete when all four hold:
+
+1. **Design** — requirements identified in `docs/domain-spec.md`, open questions resolved or
+   explicitly deferred with the deferral recorded
+2. **Implementation** — the part exists, consumes its element, and degrades/repairs
+3. **Integration** — it participates in the chi economy and is visible in the workshop inspector
+4. **Testing** — unit tests pass, **and** the system has been verified by tick-stepping in
+   workshop mode (see below)
+
+### Workshop mode is the verification instrument
+
+`--workshop` is not a debugging convenience; it is how each organ system is confirmed to do what
+it is believed to do. Single bot, tick-by-tick stepping, full state inspector, and a per-tick CSV
+capturing organs, storage, per-element intake, damage, and per-leg reserve/integrity/thrust.
+
+Every organ epic is verified here before it is called done. Practically this means: step through
+the ticks where the new organ acts, confirm each value moves the direction and magnitude expected,
+and only then trust an aggregate run. Any organ added to the model must also be added to the
+workshop inspector and to `WorkshopLogger` — an organ that cannot be watched cannot be accepted.
+
+### Taobot model variants
+
+A standing deliverable across the organ epics: a set of hand-crafted taobot models to run and
+compare, varying independently along
+
+- **Symmetry** — radial vs bilateral (`BODY-6`)
+- **Part count** — e.g. two legs vs four vs six
+- **Organ settings** — drain rates, capacities, regeneration thresholds
+
+These are the substrate for the body-spec differentiation criterion below, and they are what turns
+"does this organ work" into "does this organ produce differentiated behavior." They live as config
+so that Phase 4 genetics can later generate the same structures.
 
 **Key design decisions:**
 - Taobot positions are continuous float (x, y) — not grid-snapped
 - Bodies rendered as colored circles per organ at polar offset from center (upgrade to arc polygons later if desired)
 - Synapse targets use stable `gene_id` references (not list indices) — set up even though genetics don't exist yet, to avoid retrofitting
 
-**Chi pool:** `dict[ElementType, float]` with a capacity cap. Elemental chemistry: destructive cycle pairs degrade each other per tick at `DEGRADE_RATE=0.001` (tunable constant). This is the most sensitive balance parameter — too high and taobots die from internal imbalance; too low and element composition has no evolutionary pressure.
-
 **Body parts (static state, no neural activation yet):**
-- `LegPart` — polar position, force scale, consumes Water chi
-- `MeridianPart` — element affinity, internal storage, absorbs/diffuses its element, consumes Wood chi
-- `NeuronPart` — placeholder structure (dendrites, synapses defined but inert)
-- `ArmorPart` — scales (absorb damage) or claws (deal damage), consumes Metal chi; wear and repair
+- `LegPart` — **built.** Polar position, `phi` push-direction, thrust, consumes Water; differential-drive steering — `LEG-2`…`LEG-5`, `LEG-6` partial
+- `MeridianPart` — *not built.* Element affinity, internal storage, absorbs/diffuses its element, consumes Wood chi — `MER-1`, `MER-2`, `MER-4`…`MER-6`, `MER-8`, `MER-9`
+- `NeuronPart` — *not built.* Placeholder structure (dendrites, synapses defined but inert) — `BODY-4`, `NEU-4`
+- `ArmorPart` — *not built.* Scales (absorb damage) or claws (deal damage), consumes Metal chi; wear and repair — `ARM-2`, `ARM-4`, `ARM-5`
+
+**Requirements covered by this phase:** `BODY-2`, `BODY-3`, `LEG-2`…`LEG-6`, `MER-1`…`MER-9`,
+`STR-1`…`STR-3`, `ARM-1`, `ARM-2`, `ARM-4`, `ARM-5`, `CHI-1`…`CHI-5`. Open questions blocking
+completion: **Q4** (destructive-cycle rate), **Q6** (storage/chi boundary).
 
 **Body definition:** Explicit parameter structs, not genes yet. Each body part has a polar position (r, theta), size, element type, and part-specific params. A `BodyFactory` reads these and instantiates the body — same interface that genetics will later drive.
 
 **Rendering:** Body parts as colored circles at polar offset from taobot center. Chi pool as 5-segment pie ring around center. Heading arrow.
 
-**Key files to create/extend:**
+**Files — planned vs actual:**
 ```
-chi.py             # ChiPool, elemental chemistry tick
-body_parts.py      # BodyPart base + Leg, Meridian, Neuron (inert), Armor subclasses
-body_factory.py    # BodyFactory: body spec -> list[BodyPart], assigns stable part IDs
-taobot.py          # Full Taobot: chi pool, body parts, tick (consume, absorb, chemistry)
-renderer.py        # Extended: polar body rendering, chi ring
+body_parts.py      BUILT     BodyPart base + LegPart only
+body_factory.py    BUILT     BodyFactory: body spec -> list[BodyPart], stable part IDs
+renderer.py        BUILT     Polar body rendering, organ graph
+taobot_simple.py   BUILT     Organ system lives here (not in the planned taobot.py)
+chi.py             MISSING   ChiPool, destructive-cycle chemistry tick
+taobot.py          MISSING   Superseded — organs were added to taobot_simple.py instead
 ```
 
-**Exit criteria:** Taobots with varied hand-crafted body specs survive at visibly different rates. Chi chemistry creates internal tension (a taobot loaded with incompatible elements degrades faster). Body part health degrades and repairs. Inspector shows per-organ state.
+<a name="phase-2-status"></a>
+### Phase 2 status against exit criteria
+
+Phase 2 completes when epics E1–E3 are done. Progress is tracked per epic, not against the
+original big-bang criteria — those assumed all four body parts landing together with full
+chemistry, which is not how this is being built.
+
+| Epic | Design | Implementation | Integration | Testing |
+|---|---|---|---|---|
+| E1 Legs | Done | Done — thrust, `phi`, differential drive | Done — Water drain, workshop inspector | **Partial** — unit tests pass; no repair path (`LEG-6`) |
+| E2 Armor | — | — | — | — |
+| E3 Meridians | — | — | — | — |
+
+Organ layer and the constructive cycle are complete and underpin all three epics.
+
+### Exit criteria (measurable)
+
+Replaces the original qualitative criteria. All are measurable from logs the sim already writes —
+`<world>_deaths.csv`, `<world>_workshop_<timestamp>.csv`, `<world>_<timestamp>.csv`. Thresholds
+are starting proposals, to be confirmed at the Phase 3 planning session.
+
+1. **Body-spec differentiation** — across ≥3 taobot model variants (differing in symmetry, part
+   count, or organ settings), 10k ticks each at a fixed seed, median lifespan between best and
+   worst differs by ≥30% (`deaths.csv`, `age_ticks`).
+2. **Constructive chi economy** — in a workshop run, an organ depleted below its regeneration
+   threshold recovers via conversion from an adjacent element in the productive cycle, visible as
+   a fall in the source element's storage and a rise in the target's (workshop CSV, `storage_*`).
+3. **Degrade and repair both observable** — in a single workshop run, at least one organ drops
+   below 50 and recovers above 80 (workshop CSV, `organ_*` columns); each built part's integrity
+   shows the same round trip (`leg_*_integrity` and equivalents per epic).
+4. **Population stability** — 20 taobots run 10 minutes headless with population never below 15
+   and no extinction (`<world>_<timestamp>.csv`).
+5. **Workshop completeness** — every organ and part built in E1–E3 is visible in the workshop
+   inspector and present in `WorkshopLogger` columns. *(Met for E1.)*
+
+Destructive-cycle tension is deliberately **not** an exit criterion for this phase — the Ke cycle
+is deferred until the organ epics are complete.
 
 ---
 
@@ -138,6 +320,8 @@ tests/
   test_neural.py   # Neural update step tested independently of game loop
 ```
 
+**Requirements covered by this phase:** `NEU-1`…`NEU-7`, `LEG-1`, `MER-7`, `MER-10`, `MER-12`, `BODY-4`, `BODY-5`. Open questions to resolve at the planning session: **Q1** (ray cast vs cone), **Q2** (synapse types), **Q6** (storage/chi boundary).
+
 **Exit criteria:** Taobots navigate toward preferred resources. Different hand-crafted neural configs produce visibly different foraging strategies. Neural activity visible in inspector. Taobots with more/better-wired neurons outperform random walkers.
 
 ---
@@ -167,6 +351,8 @@ tests/
   test_evolution.py
 ```
 
+**Requirements covered by this phase:** `BODY-1`, `BODY-6`, `MER-3`, `ARM-3`, `GEN-1`, `GEN-2`. Open questions to resolve at the planning session: **Q3** (Earth as gene type or cost factor), **Q5** (gene domains).
+
 **Exit criteria:** Population evolves over 30+ minute runs. Karma distribution shifts over time. Lineages visible in gene bank. Taobots in later generations visibly outperform early random genomes. Gene bank persists and reloads correctly across sessions.
 
 ---
@@ -189,6 +375,8 @@ collision.py       # Collision detection, damage resolution, consumption
 body_parts.py      # Extended: ArmorPart claw/scale damage logic, wear and repair
 chi.py             # Extended: external chi injection
 ```
+
+**Requirements covered by this phase:** `ARM-6`, `ARM-7`, `MER-11`, `NEU-8`. Open question: **Q1** (ray casting upgrade for combat sensing).
 
 **Exit criteria:** Distinct predator and prey lineages emerge over long runs. Armor/claw organs appear and grow in predator lineages. Karma metrics reflect combat success. Chi combat (if implemented) shows as a distinct attack strategy in some lineages.
 
@@ -272,3 +460,61 @@ Contingent on simulation working. Key elements:
 ## Planning Session Protocol
 
 Each phase kicks off with a planning session: review current simulation behavior, define what the next phase needs to achieve, identify the variables and parameters that will need tuning, and agree on exit criteria before coding begins. Do not start implementation of a phase without agreed exit criteria.
+
+### Session steps
+
+1. Convene Architecture Agent + phase-specific agent(s)
+2. Review current simulation state (run a headless session, share logs)
+3. Review exit criteria for the completed phase — were they met?
+4. Produce design for next phase, resolving all open questions before coding
+5. Convene Test Design Agent to write test stubs
+6. Begin implementation only after all agents have signed off
+
+---
+
+## Design Team
+
+The relevant specialist agents are convened at each phase kickoff, given the current simulation state and target outcomes, and produce a design before implementation begins.
+
+### Standing roles
+
+**Architecture Agent**
+- *When:* Start of every phase planning session.
+- *Job:* Review the proposed design for the next phase against the existing codebase. Identify integration risks, interface mismatches, and anything that will be painful to retrofit later. Flag decisions that need to be made before coding begins.
+- *In:* Current codebase state, proposed phase design, exit criteria. *Out:* Amended design with risks flagged, interface specs for new modules.
+
+**Balance & Tuning Agent**
+- *When:* End of Phase 1, end of Phase 2, and any time the simulation behaves unexpectedly.
+- *Job:* Analyze simulation run logs and metrics (population stability, element equilibrium, lifespan trends). Propose parameter adjustments. Design experiments to test hypotheses about balance (e.g. "what happens if DEGRADE_RATE doubles?").
+- *In:* Headless run logs from `logs/`, world config, current constants. *Out:* Tuned config values, documented rationale, suggested experiments.
+
+**Test Design Agent**
+- *When:* Start of each phase, after architecture review.
+- *Job:* Design the test suite for the phase — unit tests for new modules, simulation health invariants to monitor, regression tests to ensure prior phases still work. Write test stubs and fixtures.
+- *In:* Interface specs from Architecture Agent, exit criteria. *Out:* Test files with stubs, fixture definitions, invariant checklist.
+
+### Phase-specific roles
+
+**Phase 3 — Neural Architect Agent**
+- *Job:* Specialist review of the neural graph design — update order, cycle detection, activation dynamics. Validate that the sparse graph representation will produce interesting behavior and is evolvable. Advise on whether to numpy-ify early or late.
+- *In:* `body_parts.py`, `neural_graph.py` design, Phase 2 codebase. *Out:* Validated neural update spec, numpy migration decision, test cases for neural dynamics.
+
+**Phase 4 — Evolutionary Dynamics Agent**
+- *Job:* Review crossover and mutation operators for evolvability. Check that karma signals are meaningful and multidimensional. Advise on population dynamics (mutation rate, hopeful monster rate, gene bank pruning). Identify degenerate equilibria (e.g. all taobots converging to one genome).
+- *In:* `gene.py`, `evolution.py` design, karma metric spec. *Out:* Validated operator designs, recommended starting parameters, diversity metrics to monitor.
+
+**Phase 5 — Combat Balancing Agent**
+- *Job:* Review collision and damage mechanics for balance. Ensure predator/prey dynamics are plausible — predators should be viable but not dominant. Design experiments to test whether combat creates evolutionary pressure or just noise.
+- *In:* `collision.py` design, Phase 4 codebase, balance metrics from Phase 4 runs. *Out:* Damage scaling recommendations, combat karma attribution design, test scenarios.
+
+**Phase 6 — Developmental Biology Agent**
+- *Job:* Design the embryo gradient system and stem cell maturation rules. Must integrate everything learned in Phases 3–5 about what body part parameters need to be gene-encodable. Advise on the matrix representation for post-development taobot state.
+- *In:* Full Phase 5 codebase, `gene.py`, `neural_graph.py`, lessons-learned notes from prior phases. *Out:* Gradient field spec, gene activation rules, maturation sequence, matrix representation design.
+
+### Game layer roles (post-Phase 6)
+
+**Visual Design Agent** — Given stable simulation semantics, design the visual language for taobots and the world. Produce rendering specs for organism physiology visualization, dashboards, and arena UI. Works from a clean interface (`renderer.py`) without touching simulation logic.
+
+**Arena Design Agent** — Design the arena mode: competitive vs. ecological formats, genome import/export protocol, world config parameterization for arena types, matchmaking logic.
+
+**Genetic Engineering UI Agent** — Design the genome editor UI: visual body plan inspector, parameter tweaking interface, lineage tree viewer, fork/save workflow.
