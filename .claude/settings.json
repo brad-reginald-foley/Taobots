@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "in=$(cat); [ \"$(printf '%s' \"$in\" | jq -r '.stop_hook_active // false')\" = \"true\" ] && exit 0; cd \"${CLAUDE_PROJECT_DIR:-.}\" 2>/dev/null; out=$(PATH=\"$PWD/.venv/bin:$PATH\" make check 2>&1) || jq -nc --arg o \"$out\" '{systemMessage:\"make check failed\", decision:\"block\", reason:(\"`make check` failed — fix before finishing:\\n\" + $o)}'; exit 0",
+            "timeout": 120,
+            "statusMessage": "Running make check"
+          }
+        ]
+      }
+    ]
+  }
+}
