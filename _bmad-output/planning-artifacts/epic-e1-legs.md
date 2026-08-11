@@ -27,6 +27,69 @@ leg integrity currently only falls.
 
 ---
 
+## QA expectations
+
+These apply to every story in the epic and are part of its acceptance, not a separate phase.
+
+### Invariants — asserted over a run, not a single call
+
+The existing suite is example-based (`test_cycle_is_lossy`, `test_cycle_respects_capacity`) and
+good at what it does. It cannot catch what this sprint risks: **E1-S2 adds a second conversion
+path alongside the passive cycle**, and the failure modes there are double-conversion, accounting
+drift, and threshold thrashing. None of those fail an example test, and all of them silently
+corrupt every balance number measured afterwards — including the Phase 2 exit criteria thresholds.
+
+Add a harness that ticks a taobot several thousand times under varied conditions and asserts, on
+every tick:
+
+| Invariant | Assertion |
+|---|---|
+| Storage bounded | `0 ≤ storage[e] ≤ capacity[e]` for all five elements |
+| Part integrity bounded | `0.0 ≤ structural_integrity ≤ 1.0` for every body part |
+| Organ integrity bounded | `0.0 ≤ organs[e] ≤ ORGAN_MAX` for all five |
+| Essence is never created | For any conversion, `target_gain ≤ source_spend × CYCLE_EFFICIENCY` within tolerance — essence may be lost to efficiency, never manufactured |
+| No numeric corruption | No `NaN` or `inf` in any float state |
+| Determinism | Same seed, same tick count → identical state. A seeded run must reproduce exactly. |
+
+The essence-conservation invariant is the important one. The existing passive cycle gets this right
+by deriving `spent = produced / CYCLE_EFFICIENCY` *after* capping on available room
+(`taobot_simple.py:484`). Any new conversion path must reproduce that discipline, and the invariant
+is what proves it did.
+
+### Constants are derived, not chosen
+
+S2 and S3 introduce tunable constants — deficit threshold fraction, elevated conversion rate,
+repair rate, Earth floor. **Do not pick plausible-looking numbers.** Derive each in workshop mode
+by stepping through the behavior it governs, then record the reasoning in a comment beside the
+constant, in the style of `LEG_INTEGRITY_DEGRADE_SCALE`:
+
+```python
+# At drain_max=0.005 and scale=0.5, a fully-starved leg loses integrity
+# at 0.0025/tick → reaches 0 in ~400 ticks.
+```
+
+A constant without a recorded rationale is an untuned balance parameter wearing a number.
+
+### Regression guard on unchanged paths
+
+S2 must not alter behavior above its threshold. A seeded headless run with Water storage held above
+the deficit line must produce logs identical to the pre-change build. Capture the baseline before
+implementing, using a worktree at the current HEAD.
+
+### Spike acceptance is different
+
+E1-S1 is done when a finding is **written down**. It ships knowledge, not code. A spike that
+produces implementation has failed regardless of how good the implementation is — it means the
+investigation was cut short to start building.
+
+### Run one story at a time
+
+Start with E1-S1 and stop. Its entire purpose is to change what is known about the damage model;
+if it reports that armor nullifies hazard damage at typical Metal integrity, that reshapes E2 and
+possibly world balance. Building S2 and S3 before that finding lands wastes the spike.
+
+---
+
 ## E1-S1 — Investigate the current damage model *(spike, timeboxed)*
 
 **Why:** Repair is otherwise designed against assumptions. Analysis of 520 deaths over 59,400
