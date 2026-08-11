@@ -174,11 +174,19 @@ and testing — carried to working, verified behavior before the next one starts
 |---|---|---|---|---|---|
 | E1 | **Legs** | Water | 2 | **In progress** | Locomotion is the visible output; everything else is verified by watching a bot move |
 | E2 | **Armor** | Metal | 2 | Next | Simplest and largely passive — wear, damage absorption. Banks a quick win and proves the epic workflow end to end |
-| E3 | **Meridians** | Wood | 2 | Planned | Chi transport, conversion and junctions — the network connecting organs. Ships with autonomous triggering; neurons replace the built-in rules in E4 |
+| E3 | **Meridians** | Wood | 2 | Planned | Chi transport, conversion and junctions — the network connecting organs. Ships with autonomous triggering; neurons replace the built-in rules in E4. **Architect pass gates this epic** — see below |
 | E4 | **Neurons** | Fire | 3 | Planned | Last, because it is the integration layer — see below |
 
 **Earth/body is not its own epic.** It behaves as a cost factor required by the other parts rather
 than a standalone system (`STR-4`, open question **Q3**).
+
+**E3 opens with an architect pass.** E1 and E2 are small enough to build directly; E3 is not.
+The meridian network raises genuine architectural questions — graph representation, how junctions
+are declared, update ordering across a network that may contain cycles, and **Q6** (whether the
+chi economy stays as methods on `TaobotSimple` or becomes a subsystem the taobot owns). Convening
+the architect *after* E1 and E2 is deliberate: by then the E1-S1 damage spike has reported, a
+demand-driven conversion trigger has run in practice, and armor has exercised the damage path — so
+the design is made against evidence rather than intent. Do not start E3 implementation before it.
 
 **Mechanism before control.** Each organ system is built with autonomous triggering — the part
 "just knows" when to act, sensing a starving organ or an empty downstream meridian — and neurons

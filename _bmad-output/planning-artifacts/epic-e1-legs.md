@@ -65,6 +65,11 @@ Water at an elevated rate until it recovers.
 - Workshop-observable: step to the tick the trigger fires and see the rate change in `storage_METAL` and `storage_WATER`
 - Unit tests covering below-threshold, above-threshold, and the boundary
 - `Q7` updated in `docs/domain-spec.md` with what this demonstrates
+- **Implemented as a separable function**, not inline in `_cycle_elements`, so the meridians epic
+  can lift it without a rewrite. The chi economy currently lives as private methods on
+  `TaobotSimple` (`_drain_organ`, `_metabolize`, `_cycle_elements`); at E3 conversion becomes a
+  property of the meridian network instead. This costs nothing now and removes most of the
+  retrofit risk — see `Q6`.
 
 **Note for Q7.** This is a demand-triggered conversion that needs **no neuron**. It is evidence
 that the answer to "passive, gated, or both?" is *both* — a passive baseline plus organ-level
