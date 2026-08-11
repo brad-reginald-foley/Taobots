@@ -523,7 +523,10 @@ class Renderer:
                 f"{leg['reserve']:.3f}/{leg['capacity']:.1f}",
             )
             y += lh
-            txt(f"  thr {leg['thrust']:+.4f}  max {leg['max_thrust']:.2f}  phi {leg['phi_deg']:.0f}deg")
+            txt(
+                f"  thr {leg['thrust']:+.4f}  max {leg['max_thrust']:.2f}"
+                f"  phi {leg['phi_deg']:.0f}deg"
+            )
 
     def _draw_organ_graph(self) -> None:
         """Draw the rolling Wood organ graph in the lower panel.

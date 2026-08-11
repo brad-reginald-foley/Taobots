@@ -357,10 +357,11 @@ class World:
         if x is None and y is None:
             affinity = self.config.resources.cluster_affinity.get(element_type, 0.0)
             x, y = self._pick_position(element_type, affinity, self._resources)
-        elif x is None:
-            x = random.uniform(0, self.config.width)
-        elif y is None:
-            y = random.uniform(0, self.config.height)
+        else:
+            if x is None:
+                x = random.uniform(0, self.config.width)
+            if y is None:
+                y = random.uniform(0, self.config.height)
 
         eid = self._alloc_id()
         r = Resource(x=x, y=y, element_type=element_type, entity_id=eid)
@@ -381,10 +382,11 @@ class World:
         if x is None and y is None:
             affinity = self.config.hazards.cluster_affinity.get(element_type, 0.0)
             x, y = self._pick_position(element_type, affinity, self._hazards)
-        elif x is None:
-            x = random.uniform(0, self.config.width)
-        elif y is None:
-            y = random.uniform(0, self.config.height)
+        else:
+            if x is None:
+                x = random.uniform(0, self.config.width)
+            if y is None:
+                y = random.uniform(0, self.config.height)
 
         eid = self._alloc_id()
         h = Hazard(x=x, y=y, element_type=element_type, entity_id=eid)

@@ -73,8 +73,10 @@ DEFAULT_PARAMS: dict = {
     # max_thrust=1.5 covers the fastest archetype (wanderer speed=2.2, T_base=1.1)
     # and leaves headroom for differential steering corrections.
     "body": [
-        {"type": "leg", "r": 1.5, "theta":  0.4, "phi": 0.0, "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
-        {"type": "leg", "r": 1.5, "theta": -0.4, "phi": 0.0, "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+        {"type": "leg", "r": 1.5, "theta": 0.4, "phi": 0.0,
+         "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+        {"type": "leg", "r": 1.5, "theta": -0.4, "phi": 0.0,
+         "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
     ],
 }
 
@@ -225,7 +227,7 @@ class TaobotSimple:
     # --- Main tick ---
 
     def tick(self, world: "World") -> None:
-        """Advance this taobot by one simulation tick: sense, decide, act, body, metabolize, cycle."""
+        """Advance one simulation tick: sense, decide, act, body, metabolize, cycle."""
         nearby_resources, nearby_hazards = self._sense(world)
         self._decide(nearby_resources, nearby_hazards, world)
         self._act(world)
@@ -292,7 +294,8 @@ class TaobotSimple:
         if self.organs[ElementType.FIRE] < FIRE_LOCKOUT_THRESHOLD:
             self.behavior_state = "searching"
             self.target_entity_id = None
-            self._desired_heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
+            turn = self.random_walk_turn_rate
+            self._desired_heading += random.uniform(-turn, turn)
             self._desired_heading %= 2 * math.pi
             return
 
@@ -328,7 +331,8 @@ class TaobotSimple:
         # Step 5: SEARCH — random walk
         self.behavior_state = "searching"
         self.target_entity_id = None
-        self._desired_heading += random.uniform(-self.random_walk_turn_rate, self.random_walk_turn_rate)
+        turn = self.random_walk_turn_rate
+        self._desired_heading += random.uniform(-turn, turn)
         self._desired_heading %= 2 * math.pi
 
     # --- Act ---
