@@ -30,6 +30,26 @@ Requirements marked **Open** carry a genuine unresolved decision and are not rea
 from. They were phrased as questions or hedges in the original notes, and that uncertainty is
 preserved deliberately rather than resolved by assumption.
 
+## Design principle: mechanism before control
+
+A subsystem's **mechanism** and its **control** are separable, and they are built in that order.
+
+Build the mechanism first with **autonomous triggering** — the part "just knows" when to act. A
+meridian senses that an organ is starving, or that its downstream meridian is empty, and moves
+essence accordingly. Later, neurons replace that built-in rule with sensed, wired, evolvable
+control. The transfer itself does not change; only the decision to make it moves.
+
+This is why neurons are built last (`PLAN.md`, epic E4). It is also why requirements below
+describe *what a part does* separately from *what causes it to do so* — a requirement phrased as
+"a neuron-activated junction releases chi" describes the eventual control, and its autonomous
+predecessor is a legitimate first implementation, not a shortcut.
+
+Consequences for reading this spec:
+
+- A **Planned** requirement naming neural activation may be satisfied first by an autonomous rule
+- Retiring that rule in favor of neural control is expected work in the neurons epic, not rework
+- Open questions about *who decides* (Q7) do not block building *what happens*
+
 ---
 
 ## 1. Body plan (`BODY-*`)
@@ -104,6 +124,11 @@ during Phase 2 and is not in the original notes; see `body_parts.py`.
 | MER-10 | A neuron-activated junction releases chi from one meridian into another | 3 | Planned |
 | MER-11 | External junctions let a meridian expel elements out of the body | 5 | Planned |
 | MER-12 | Synapse types are distinguished: absorb, diffuse, expel | 3 | **Open** — see Q2 |
+| MER-13 | Meridians connect to organs, not only to each other — they are the transport network moving essence through the whole body | 2 | Planned |
+| MER-14 | Meridians convert essence from one type to another | 2 | Planned |
+| MER-15 | A meridian senses that a connected organ is starving | 2 | Planned — autonomous first, see [design principle](#design-principle-mechanism-before-control) |
+| MER-16 | A meridian senses that a downstream meridian is empty | 2 | Planned — autonomous first |
+| MER-17 | Meridians act on those signals without neural input in their first implementation; neural control replaces the built-in rule in E4 | 2 | Planned |
 
 ## 5. Structural body (`STR-*`)
 
@@ -165,6 +190,6 @@ can be built.
 | Q2 | Do absorb / diffuse / expel need to be distinct synapse types, or one type with a mode parameter? | MER-12 | Phase 3 planning session |
 | Q3 | Is Earth/body a gene type of its own, or a cost factor on other parts? | STR-4, BODY-6 | Phase 4 planning session |
 | Q4 | What is the destructive-cycle degradation rate? Noted as the most sensitive balance parameter in `PLAN.md` — too high and taobots die of internal imbalance, too low and element composition carries no evolutionary pressure. | CHI-4, CHI-6 | After the organ epics (E1–E3) |
-| Q7 | Is chi conversion a passive baseline, neuron-gated on demand, or both? The built cycle runs unconditionally every tick; the target behavior described for neurons is a gate opened in response to an organ deficit. Decide once meridians exist and the passive baseline's actual contribution is visible. | NEU-12, CHI-7, MER-10 | Neurons epic (E4) |
+| Q7 | Once neurons exist, how much conversion stays autonomous and how much becomes neurally controlled — and does the passive unconditional cycle survive alongside both? **Staging is already decided**: mechanisms are built with autonomous triggers now and neural control is wired later (see design principle). What remains open is the end state, not the build order. | NEU-12, CHI-7, MER-10, MER-17 | Neurons epic (E4) |
 | Q5 | What domains does a gene carry? | GEN-2, BODY-1 | Phase 4 planning session |
 | Q6 | Once the chi pool exists, is `storage` the chi pool, or does chi sit behind meridians as a separate buffer? | MER-4, CHI-1, CHI-2 | Phase 3 planning session |

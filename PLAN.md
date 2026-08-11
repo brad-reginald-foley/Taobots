@@ -174,11 +174,18 @@ and testing — carried to working, verified behavior before the next one starts
 |---|---|---|---|---|---|
 | E1 | **Legs** | Water | 2 | **In progress** | Locomotion is the visible output; everything else is verified by watching a bot move |
 | E2 | **Armor** | Metal | 2 | Next | Simplest and largely passive — wear, damage absorption. Banks a quick win and proves the epic workflow end to end |
-| E3 | **Meridians** | Wood | 2 | Planned | Chi transport and junctions. Built directly before neurons so the gate design is freshest when wiring begins |
+| E3 | **Meridians** | Wood | 2 | Planned | Chi transport, conversion and junctions — the network connecting organs. Ships with autonomous triggering; neurons replace the built-in rules in E4 |
 | E4 | **Neurons** | Fire | 3 | Planned | Last, because it is the integration layer — see below |
 
 **Earth/body is not its own epic.** It behaves as a cost factor required by the other parts rather
 than a standalone system (`STR-4`, open question **Q3**).
+
+**Mechanism before control.** Each organ system is built with autonomous triggering — the part
+"just knows" when to act, sensing a starving organ or an empty downstream meridian — and neurons
+replace those built-in rules in E4. The transfer does not change; only the decision to make it
+moves. This is what makes neurons-last viable rather than merely deferred: no epic is blocked
+waiting for neural control, and E4 becomes a substitution rather than a first wiring. See the
+design principle in `docs/domain-spec.md`.
 
 **Why neurons last.** Neurons are not merely the hardest system, they are the one that *integrates
 the others*. Everything hinges on their spatial order, how they sense the internal environment,
