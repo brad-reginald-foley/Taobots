@@ -35,16 +35,27 @@ EARTH_CRISIS_DRAIN: float = 0.1              # Earth organ lost per tick during 
 FIRE_LOCKOUT_THRESHOLD: float = 20.0
 
 # Base storage drain per tick for each organ (drawn from the governing element's storage)
-# Water drain is further scaled by current speed fraction (locomotion is activity-dependent).
 # Earth drain covers structural maintenance; Wood covers meridian/metabolic upkeep;
 # Metal covers armor upkeep. Rates follow the role, not the element.
+# Water has no entry: the Water organ is derived from the legs (see DERIVED_ORGANS) and
+# Water storage is consumed by LegPart.tick(), not by an abstract organ drain.
 ORGAN_STORAGE_DRAIN: dict[str, float] = {
     "FIRE":  0.015,
-    "WATER": 0.012,
     "WOOD":  0.010,
     "EARTH": 0.004,
     "METAL": 0.002,
 }
+
+# Organs that are *derived summary statistics* over the body parts of that element
+# rather than stored scalars (AD-5). A derived organ has no slot in `_organs`, is read
+# only through `organ()`, and cannot be drained — `_drain_organ` raises for it.
+# One organ moves per epic: Water first, because LegPart already owns locomotion cost.
+# The other four — Fire, Wood, Earth and Metal — stay stored scalars, because no parts
+# of those elements exist yet: deriving them now reads 0.0 and silently disables the
+# capability each governs.
+# Invariant: DERIVED_ORGANS and ORGAN_STORAGE_DRAIN partition ElementType — every organ
+# is either derived from parts or funded by a storage drain, never both and never neither.
+DERIVED_ORGANS: frozenset[ElementType] = frozenset({ElementType.WATER})
 
 # Generative (Sheng) cycle: each element converts a fraction of its storage into the next.
 # All five transfers are computed simultaneously from pre-tick values to avoid directional bias.
@@ -139,9 +150,16 @@ class TaobotSimple:
     Organ system (replaces single health value):
       Earth  — body structure; death condition at 0; damaged by Metal attacks
       Fire   — nervous system; governs sensing range; at 0 → locked to searching
-      Water  — locomotion; governs speed; at 0 → immobile
+      Water  — locomotion; *derived* from the mean integrity of the Water-element
+               parts (today, the legs). Reported and rendered, but nothing reads it:
+               the legs own locomotion cost directly, so a Water organ of 0 has no
+               behavioural effect. It is a gauge, not yet a control.
       Wood   — meridians/transport; drain multiplier rises as it degrades
       Metal  — armor; absorbs incoming damage before Earth takes it
+
+    Every organ is read through `organ(element)`, never off a bare field: some are
+    stored scalars and some are computed from body parts, and callers must not care
+    which. See DERIVED_ORGANS.
 
     Behavioral states (in priority order):
       fleeing    — Earth organ critical or hazard too close; steer away from danger
@@ -189,12 +207,16 @@ class TaobotSimple:
         if total > 0:
             self.affinity = {k: v / total for k, v in self.affinity.items()}
 
-        # Organs — all start at full integrity
-        self.organs: dict[ElementType, float] = {e: ORGAN_MAX for e in ELEMENT_LIST}
-
-        # Phase 2 body parts
+        # Phase 2 body parts — built before the organ store because derived organs
+        # (Water) read their value straight off the parts.
         self.body_parts: list[BodyPart] = BodyFactory.make_parts(p["body"])
         self.legs: list[LegPart] = [bp for bp in self.body_parts if isinstance(bp, LegPart)]
+
+        # Stored organs — all start at full integrity. Derived organs have no slot
+        # here at all, so there is nothing to write even by accident.
+        self._organs: dict[ElementType, float] = {
+            e: ORGAN_MAX for e in ELEMENT_LIST if e not in DERIVED_ORGANS
+        }
 
         # Steering geometry derived from leg layout (phi-aware)
         self._desired_heading: float = self.heading
@@ -225,6 +247,37 @@ class TaobotSimple:
         self._interval_resources: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
         self._interval_damage: float = 0.0
 
+    # --- Organs ---
+
+    def organ(self, element: ElementType) -> float:
+        """Current integrity of one organ, 0–ORGAN_MAX.
+
+        The single read path for every organ, inside this class and out. Derived
+        organs are computed from the parts carrying that element; the rest return the
+        stored scalar. An organ system with no parts reads 0.0 — absent and destroyed
+        are deliberately indistinguishable, so a body plan that drops a part loses the
+        capability instead of getting it for free."""
+        if element in DERIVED_ORGANS:
+            return self._derive_organ(element)
+        return self._organs[element]
+
+    def _derive_organ(self, element: ElementType) -> float:
+        """Compute a derived organ from its parts: mean part integrity × ORGAN_MAX.
+
+        Membership is by *element*, not by part class — every Water-element part counts
+        toward the Water organ, so adding a second Water part type changes what the organ
+        summarises. Today the Water-element parts are exactly the legs.
+
+        The result is clamped to 0–ORGAN_MAX. `structural_integrity` is specified as
+        0–1 but nothing on `BodyPart` enforces it, and Story 1.3's repair path is the
+        first thing that could overshoot. The organ range is a hard invariant, so it is
+        held here rather than trusted upstream."""
+        parts: list[BodyPart] = [p for p in self.body_parts if p.element == element]
+        if not parts:
+            return 0.0
+        mean_integrity = sum(p.structural_integrity for p in parts) / len(parts)
+        return max(0.0, min(ORGAN_MAX, mean_integrity * ORGAN_MAX))
+
     # --- Main tick ---
 
     def tick(self, world: "World") -> None:
@@ -244,7 +297,7 @@ class TaobotSimple:
 
         Sensing range is scaled by Fire organ integrity — a degraded nervous system
         sees less of the world. Returns (resources, hazards), each sorted nearest-first."""
-        fire_frac = self.organs[ElementType.FIRE] / ORGAN_MAX
+        fire_frac = self.organ(ElementType.FIRE) / ORGAN_MAX
         effective_range = self.sensing_range * fire_frac
         resources = world.query_resources(self.x, self.y, effective_range)
         hazards = world.query_hazards(self.x, self.y, effective_range)
@@ -265,7 +318,7 @@ class TaobotSimple:
         ww, wh = world.config.width, world.config.height
 
         # Step 1: FLEE — critical Earth organ (structural integrity near zero)
-        if self.organs[ElementType.EARTH] < self.flee_earth_threshold:
+        if self.organ(ElementType.EARTH) < self.flee_earth_threshold:
             self.behavior_state = "fleeing"
             if nearby_hazards:
                 nearest = nearby_hazards[0]
@@ -292,7 +345,7 @@ class TaobotSimple:
             return
 
         # Step 2: FIRE LOCKOUT — nervous system too degraded to sense or decide
-        if self.organs[ElementType.FIRE] < FIRE_LOCKOUT_THRESHOLD:
+        if self.organ(ElementType.FIRE) < FIRE_LOCKOUT_THRESHOLD:
             self.behavior_state = "searching"
             self.target_entity_id = None
             turn = self.random_walk_turn_rate
@@ -416,15 +469,23 @@ class TaobotSimple:
 
         If storage is sufficient, the cost is paid. If the remaining storage then
         exceeds the regen threshold, the organ regenerates slightly.
-        If storage is insufficient, it is zeroed and the organ degrades."""
+        If storage is insufficient, it is zeroed and the organ degrades.
+
+        Raises ValueError for a derived organ: its value is a summary of its parts, so
+        writing it here would be silently discarded. Degrade the parts instead."""
+        if element in DERIVED_ORGANS:
+            raise ValueError(
+                f"{element.name} is a derived organ — its integrity comes from its body "
+                "parts and cannot be drained. Degrade the parts instead."
+            )
         if self.storage[element] >= drain:
             self.storage[element] -= drain
             regen_floor = REGEN_STORAGE_THRESHOLD * self.storage_capacity[element]
             if self.storage[element] > regen_floor:
-                self.organs[element] = min(ORGAN_MAX, self.organs[element] + ORGAN_REGEN_RATE)
+                self._organs[element] = min(ORGAN_MAX, self._organs[element] + ORGAN_REGEN_RATE)
         else:
             self.storage[element] = 0.0
-            self.organs[element] = max(0.0, self.organs[element] - ORGAN_DEGRADE_RATE)
+            self._organs[element] = max(0.0, self._organs[element] - ORGAN_DEGRADE_RATE)
 
     def _metabolize(self) -> None:
         """Run one tick of organ metabolism.
@@ -433,18 +494,18 @@ class TaobotSimple:
         drains are normal; at zero Wood all drains double. This multiplier applies
         to Fire, Earth, Wood, and Metal organs.
 
-        Water storage is consumed by LegParts (in _tick_body_parts) and is not drained here.
+        Water is absent: it is a derived organ, so `_drain_organ` would raise for it.
+        Water storage is consumed by LegParts (in _tick_body_parts), and the Water
+        organ falls out of their structural integrity.
 
         Earth crisis: if Wood is critically low AND total storage is nearly empty,
         systemic metabolic failure directly damages the Earth organ on top of starvation."""
-        wood_mult = 1.0 + (ORGAN_MAX - self.organs[ElementType.WOOD]) / ORGAN_MAX
+        wood_mult = 1.0 + (ORGAN_MAX - self.organ(ElementType.WOOD)) / ORGAN_MAX
 
         self._drain_organ(
             ElementType.FIRE,
             ORGAN_STORAGE_DRAIN["FIRE"] * wood_mult,
         )
-
-        # Water storage is now drained by LegParts in _tick_body_parts(); no abstract drain here.
 
         self._drain_organ(
             ElementType.EARTH,
@@ -465,12 +526,12 @@ class TaobotSimple:
         total_storage = sum(self.storage.values())
         total_capacity = sum(self.storage_capacity.values())
         crisis = (
-            self.organs[ElementType.WOOD] < EARTH_CRISIS_WOOD_THRESHOLD
+            self.organ(ElementType.WOOD) < EARTH_CRISIS_WOOD_THRESHOLD
             and total_storage < EARTH_CRISIS_STORAGE_FRACTION * total_capacity
         )
         if crisis:
-            self.organs[ElementType.EARTH] = max(
-                0.0, self.organs[ElementType.EARTH] - EARTH_CRISIS_DRAIN
+            self._organs[ElementType.EARTH] = max(
+                0.0, self._organs[ElementType.EARTH] - EARTH_CRISIS_DRAIN
             )
 
     # --- External callbacks ---
@@ -504,9 +565,9 @@ class TaobotSimple:
         Damage totals are always tracked at face value for logging."""
         self.damage_taken_total += amount
         self._interval_damage += amount
-        metal_frac = self.organs[ElementType.METAL] / ORGAN_MAX
+        metal_frac = self.organ(ElementType.METAL) / ORGAN_MAX
         earth_damage = amount * (1.0 - metal_frac)
-        self.organs[ElementType.EARTH] = max(0.0, self.organs[ElementType.EARTH] - earth_damage)
+        self._organs[ElementType.EARTH] = max(0.0, self._organs[ElementType.EARTH] - earth_damage)
 
     def reset_interval(self) -> None:
         """Zero the interval accumulators. Called by RunLogger every FOCAL_INTERVAL ticks."""
@@ -528,7 +589,7 @@ class TaobotSimple:
             "entity_id": self.entity_id,
             "x": self.x,
             "y": self.y,
-            "organs": {e.name: round(self.organs[e], 2) for e in ELEMENT_LIST},
+            "organs": {e.name: round(self.organ(e), 2) for e in ELEMENT_LIST},
             "behavior_state": self.behavior_state,
             "storage": {e.name: self.storage[e] for e in ELEMENT_LIST},
             "storage_capacity": {e.name: self.storage_capacity[e] for e in ELEMENT_LIST},

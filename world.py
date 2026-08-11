@@ -460,7 +460,7 @@ class World:
     def _check_taobot_deaths(self) -> None:
         """Remove taobots whose Earth organ has reached zero, fire death callback, then refill."""
         from common import ElementType
-        dead_ids = [eid for eid, t in self._taobots.items() if t.organs[ElementType.EARTH] <= 0.0]
+        dead_ids = [eid for eid, t in self._taobots.items() if t.organ(ElementType.EARTH) <= 0.0]
         for eid in dead_ids:
             if self.on_taobot_death is not None:
                 self.on_taobot_death(self._taobots[eid])
@@ -566,8 +566,10 @@ class World:
 
         Organ columns report the mean value across all living taobots.
         Earth organ is the death condition; Fire drives behavioral impairment;
-        Wood drives the metabolic cascade. Nothing writes the Water organ yet — it
-        reports a constant 100.0 until Story 1.0b derives it from the legs.
+        Wood drives the metabolic cascade; Metal absorbs damage. Those four are stored
+        scalars, drained and regenerated from their element's storage. Water is the one
+        derived organ — the mean integrity of the Water-element parts — so it falls as
+        the legs starve rather than holding at 100.
         Column names stay element-keyed, so their meaning inverts at Story 1.0a's
         Wood/Earth swap — see deferred-work.md."""
         taobots = self.taobots
@@ -578,7 +580,7 @@ class World:
         def mean_organ(elem: ElementType) -> float:
             if not taobots:
                 return 0.0
-            return sum(t.organs[elem] for t in taobots) / len(taobots)
+            return sum(t.organ(elem) for t in taobots) / len(taobots)
 
         return {
             "tick": self.tick_count,
@@ -589,6 +591,7 @@ class World:
             "mean_organ_fire": round(mean_organ(ElementType.FIRE), 2),
             "mean_organ_water": round(mean_organ(ElementType.WATER), 2),
             "mean_organ_earth": round(mean_organ(ElementType.EARTH), 2),
+            "mean_organ_metal": round(mean_organ(ElementType.METAL), 2),
             "resources_wood": resource_counts[ElementType.WOOD],
             "resources_water": resource_counts[ElementType.WATER],
             "resources_metal": resource_counts[ElementType.METAL],

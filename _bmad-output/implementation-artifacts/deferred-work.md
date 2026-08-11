@@ -16,7 +16,7 @@ Append-only. Each entry names work that was split out of a spec, and why.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0a-correct-the-wood-earth-organ-roles.md`
   summary: Historical log discontinuity — organ CSV columns are element-keyed (`organ_WOOD`, `mean_organ_earth`, …) and keep their names, so logs written before and after the swap are silently non-comparable.
-  evidence: Renaming the columns was rejected under "Ask First" (it would break both notebooks and `HeadlessLogger.COLUMNS`). Flagged so whoever compares runs across this commit knows the meaning inverts here.
+  evidence: Renaming the columns was rejected under "Ask First" (it would break both notebooks and `MetricsLogger.COLUMNS`). Flagged so whoever compares runs across this commit knows the meaning inverts here.
 
 <!-- Below: surfaced by the Story 1.0a code review (2026-08-11). Pre-existing or out-of-scope; none caused by the swap. -->
 
@@ -34,7 +34,7 @@ Append-only. Each entry names work that was split out of a spec, and why.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0a-correct-the-wood-earth-organ-roles.md`
   summary: Nothing makes pre- and post-1.0a CSVs machine-distinguishable; the only guard against concatenating incomparable runs is a human remembering to read `PLAN.md`.
-  evidence: Column names are element-keyed and unchanged, filenames follow the same pattern, and analysis code has no way to refuse a mixed set. A `schema_version` column in `HeadlessLogger.COLUMNS` / `_FOCAL_COLUMNS` / `WorkshopLogger._BASE_COLUMNS`, or a per-run manifest, would make it detectable. `AD-16`'s per-run manifest (seed, config, commit, versions) is the natural home — scheduled for Story 1.0d.
+  evidence: Column names are element-keyed and unchanged, filenames follow the same pattern, and analysis code has no way to refuse a mixed set. A `schema_version` column in `MetricsLogger.COLUMNS` / `_FOCAL_COLUMNS` / `WorkshopLogger._BASE_COLUMNS`, or a per-run manifest, would make it detectable. `AD-16`'s per-run manifest (seed, config, commit, versions) is the natural home — scheduled for Story 1.0d.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0a-correct-the-wood-earth-organ-roles.md`
   summary: Notebook staleness runs deeper than the labelling already logged above — two cells compute against numerically inverted demand constants.
@@ -47,3 +47,29 @@ Append-only. Each entry names work that was split out of a spec, and why.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0a-correct-the-wood-earth-organ-roles.md`
   summary: Two stale claims survive that predate this story — "damaged by Metal attacks" describes unimplemented combat, and the CI comment misdescribes how pygame is initialised.
   evidence: The organ table's "damaged by Metal attacks" (`PLAN.md`, and the `TaobotSimple` class docstring) has no implementation — the only damage source is `World._damage_taobots_near_hazards`, and Metal is the bot's own armor, not an attacker's. Separately, `.github/workflows/check.yml` says "conftest.py calls pygame.init()", but `tests/conftest.py:6-11` only *defines* a `pygame_init` fixture and no test requests it, so it never runs; the SDL dummy drivers are currently load-bearing for nothing.
+
+<!-- Below: surfaced by the Story 1.0b code review (2026-08-11). -->
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: Organ *writes* have no equivalent of the new read accessor — three sites poke `_organs` directly, and only `_drain_organ` carries the derived-organ guard.
+  evidence: `organ()` is now the single read path, but the crisis drain in `_metabolize` and `record_damage` both write `_organs[...]` unguarded. Water has no slot in `_organs` at all, so those two sites would `KeyError` the moment Earth or Metal becomes derived — which is exactly what the body-singleton work (already deferred) and E2's armor will do. A `_set_organ`/`_adjust_organ` write path enforcing the check once is the fix. Belongs to whichever story next derives an organ.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: `ORGAN_STORAGE_DRAIN` reads as configuration but behaves as documentation — `_metabolize` hardcodes four `_drain_organ` calls and never iterates the dict.
+  evidence: Adding or removing a key changes no behaviour, which makes the new "Water has no entry" comment misleading and leaves `_drain_organ`'s ValueError guard unreachable from production (only tests hit it). Driving the drains from the dict would fix both, and would make a future derived organ fail loudly at its own drain site. Also note the dict is string-keyed while `DERIVED_ORGANS` is `ElementType`-keyed — two collections describing the same five organs, indexed two different ways.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: Derived organs are recomputed on every read, and are no longer stable within a tick.
+  evidence: `organ()` runs a fresh list comprehension over `body_parts` per call — per-tick in `_sense`/`_decide`/`_metabolize`, per-taobot in `_check_taobot_deaths` and `get_stats`, per-taobot-per-frame in the renderer. Separately, a stored scalar read twice in one tick gave the same answer; a derived one changes when `_tick_body_parts` runs, so intra-tick read ordering now matters. Neither bites today because nothing reads Water functionally, but Stories 1.2 and 1.3 add Water consumers. Cache per tick or precompute an element→parts index in `__init__`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: Adding `mean_organ_metal` mid-header breaks concatenation with population CSVs written before this commit, and the notebooks silently drop the new column.
+  evidence: Compounds the log-discontinuity entry already logged for 1.0a. Both notebooks enumerate exactly four `mean_organ_*` columns guarded by `if col in pop.columns`, so Metal is now written every run and then silently ignored by the analysis — the same "silently missing Metal" this story set out to fix, one layer downstream. Notebooks are excluded from ruff/black/mypy and from CI.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: The inspectors now show Water twice — once as an aggregate organ row, once as the per-leg integrity list below it.
+  evidence: Removing the `continue`-on-Water skips was required to surface the organ, but the "shown below" legs section it referenced is still rendered. Aggregate and per-part are arguably both wanted; if so the legs heading should say which is which. Story 1.0e owns this panel and should decide, alongside the overflow the new row worsens.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
+  summary: A legless taobot is now a supported, tested state for organ reads but is never ticked, leaving `_moment_of_inertia == 0` unexercised.
+  evidence: `test_water_organ_zero_with_no_legs` constructs `params={"body": []}` and asserts the organ reads `0.0` without ticking. The steering path guards with `max(1e-9, self._moment_of_inertia)` and `_act` guards with `if n > 0`, so it looks safe — but nothing exercises it. Worth one test that ticks a legless bot end to end.

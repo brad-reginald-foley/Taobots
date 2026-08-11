@@ -83,12 +83,53 @@ def test_world_taobot_death_triggers_respawn(default_config):
         world.spawn_taobot()
     dying = world.spawn_taobot(x=5.0, y=5.0)
     dying_id = dying.entity_id
-    dying.organs[ElementType.EARTH] = 0.0
+    dying._organs[ElementType.EARTH] = 0.0
 
     world._check_taobot_deaths()
 
     assert dying_id not in world._taobots
     assert len(world.taobots) == default_config.taobots.target_population
+
+
+def test_world_stats_columns_match_producer_both_ways(default_config):
+    """`get_stats()` and `MetricsLogger.COLUMNS` must agree in *both* directions.
+
+    `log_tick` does `{k: stats[k] for k in COLUMNS}`: a column with no producer key
+    raises, but a producer key with no column is silently dropped from the CSV. That
+    second, quiet direction is how `mean_organ_metal` went missing for the whole of
+    Phase 2. Checking only "every organ is in COLUMNS" cannot catch it."""
+    from main import MetricsLogger
+
+    world = World(default_config)
+    world.spawn_taobot(x=5.0, y=5.0)
+    stats = world.get_stats()
+
+    assert set(stats) == set(MetricsLogger.COLUMNS), (
+        f"produced-but-not-logged: {sorted(set(stats) - set(MetricsLogger.COLUMNS))}; "
+        f"logged-but-not-produced: {sorted(set(MetricsLogger.COLUMNS) - set(stats))}"
+    )
+    expected_organ_keys = {f"mean_organ_{e.name.lower()}" for e in ElementType}
+    assert {k for k in stats if k.startswith("mean_organ_")} == expected_organ_keys
+
+
+def test_world_stats_organ_columns_are_not_interchangeable(default_config):
+    """Each organ column must carry *its own* organ's value.
+
+    With a freshly spawned bot every organ reads exactly 100.0, so a test that only
+    asserts 100.0 passes even if the Water and Metal arguments are swapped, or if the
+    Water entry is hardcoded back to the pre-story constant. Degrading one leg breaks
+    the tie: Water is derived and moves, the four stored organs do not."""
+    world = World(default_config)
+    bot = world.spawn_taobot(x=5.0, y=5.0)
+    assert len(bot.legs) == 2, "the derived value below assumes the two-leg default body"
+
+    bot.legs[0].structural_integrity = 0.5  # mean integrity 0.75 → Water organ 75.0
+    stats = world.get_stats()
+
+    assert stats["mean_organ_water"] == pytest.approx(75.0)
+    for elem in (ElementType.FIRE, ElementType.WOOD, ElementType.EARTH, ElementType.METAL):
+        key = f"mean_organ_{elem.name.lower()}"
+        assert stats[key] == pytest.approx(100.0), f"{key} moved with a leg — wrong organ"
 
 
 def test_spatial_hash_register_and_neighbors():
@@ -118,7 +159,7 @@ def test_world_death_callback_fires(default_config):
 
     fired: list[int] = []
     world.on_taobot_death = lambda t: fired.append(t.entity_id)
-    dying.organs[ElementType.EARTH] = 0.0
+    dying._organs[ElementType.EARTH] = 0.0
     world._check_taobot_deaths()
 
     assert dying_id in fired

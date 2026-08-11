@@ -202,7 +202,7 @@ separate buffer. This decision gates the meridian subsystem and Phase 4's gene e
 |---|---|---|
 | Earth | Body structure | Death condition at 0; damaged by Metal attacks; drives flee threshold |
 | Fire | Nervous system | Scales sensing range; below 20 → locked to searching (random walk only) |
-| Water | Locomotion | Governs speed; at 0 → immobile; drain scales with speed fraction |
+| Water | Locomotion | *Derived* — mean structural integrity of the Water-element parts (the legs) × 100; no parts → 0. Falls as the legs starve. Reported only: nothing reads it, so 0 has no behavioural effect yet |
 | Wood | Meridians / transport | Drain multiplier rises as it degrades; collapse triggers Earth crisis |
 | Metal | Armor | Absorbs incoming damage before Earth takes it |
 
@@ -212,14 +212,18 @@ is corroborated by `docs/domain-spec.md`'s element-to-part map, `MER-1` (meridia
 `STR-1`/`STR-2` (the body is Earth), and by this file's own epic table (E3 Meridians = Wood). **Any
 artifact that maps Wood to body structure predates 1.0a and is wrong** — this table is authoritative.
 
-> **⚠ The Water row above is wrong. Do not build on it.** The other four rows are correct.
-> **Nothing writes `organs[WATER]`.** `_metabolize` drains Fire, Earth, Wood and Metal only
-> (`taobot_simple.py:441-461`); `ORGAN_STORAGE_DRAIN["WATER"]` is dead. The Water organ has logged
-> a constant 100.0 in every run to date — it went vestigial when `LegPart` took over locomotion
-> cost. `world.get_stats()` also omits Metal entirely.
->
-> E1 **Story 1.0b** corrects both — the dead Water organ and the missing Metal column. The Water
-> row is rewritten when it lands, not before — per the rule above, the plan describes what exists.
+**Provenance of the Water row.** Water was a vestigial constant until E1 Story 1.0b: nothing wrote
+`organs[WATER]`, `ORGAN_STORAGE_DRAIN["WATER"]` was dead, and every run to that point logged a flat
+100.0 — the organ went hollow when `LegPart` took over locomotion cost. 1.0b made it the derived
+summary above (`AD-5`), read through `TaobotSimple.organ()` rather than a bare field, and deleted
+the dead drain constant. The other four organs remain stored scalars, drained and regenerated from
+their own element's storage; they are staged one per epic, so do not derive another without its
+parts existing first.
+
+**`mean_organ_metal` added at Story 1.0b.** `world.get_stats()` had omitted the Metal organ
+entirely, so the population CSV carried only four of the five. The column exists from 1.0b onward —
+**population logs written before that commit lack it**, and tooling that reads the older files must
+treat it as absent rather than zero.
 
 **Log discontinuity at Story 1.0a.** The organ CSV columns are element-keyed (`organ_WOOD`,
 `mean_organ_earth`, …) and keep their names across the swap, so runs logged before and after 1.0a

@@ -305,7 +305,7 @@ class Renderer:
             pygame.draw.line(self._screen, WHITE, (px, py), (hx, hy), 1)
 
             # Earth organ bar (structural integrity / death condition)
-            earth_frac = max(0.0, t.organs[ElementType.EARTH] / 100.0)
+            earth_frac = max(0.0, t.organ(ElementType.EARTH) / 100.0)
             bar_w = 12
             bar_x = px - bar_w // 2
             bar_y = py - 12
@@ -389,8 +389,6 @@ class Renderer:
 
         text("Organs:", bold=True)
         for e in ELEMENT_LIST:
-            if e == ElementType.WATER:
-                continue  # Water is owned by legs — shown below
             organ_val = state["organs"][e.name]
             swatch(ELEMENT_COLOR[e], f"{e.name}: {organ_val:.1f}")
             bar(organ_val, 100.0)
@@ -489,8 +487,6 @@ class Renderer:
         sep()
         txt("Organs", bold=True)
         for e in ELEMENT_LIST:
-            if e == ElementType.WATER:
-                continue  # Water is owned by legs — shown below
             val = state["organs"][e.name]
             self._draw_compact_bar_row(x, y, ELEMENT_COLOR[e], e.name, val, 100.0, f"{val:.1f}")
             y += lh

@@ -128,7 +128,7 @@ class RunLogger:
                 "interval_damage": round(taobot._interval_damage, 3),
             }
             for e in self._elements:
-                row[f"organ_{e.name}"] = round(taobot.organs[e], 2)
+                row[f"organ_{e.name}"] = round(taobot.organ(e), 2)
                 row[f"storage_{e.name}"] = round(taobot.storage[e], 3)
                 row[f"interval_{e.name}"] = round(taobot._interval_resources[e], 3)
             self._focal_writer.writerow(row)
@@ -155,6 +155,7 @@ class MetricsLogger:
     COLUMNS = [
         "tick", "n_taobots", "n_resources_alive", "n_resources_dead",
         "mean_organ_wood", "mean_organ_fire", "mean_organ_water", "mean_organ_earth",
+        "mean_organ_metal",
         "resources_wood", "resources_water", "resources_metal",
         "resources_fire", "resources_earth",
     ]
@@ -235,7 +236,7 @@ class WorkshopLogger:
             "tick_damage": round(taobot._interval_damage, 4),
         }
         for e in self._elements:
-            row[f"organ_{e.name}"] = round(taobot.organs[e], 3)
+            row[f"organ_{e.name}"] = round(taobot.organ(e), 3)
             row[f"storage_{e.name}"] = round(taobot.storage[e], 3)
             row[f"intake_{e.name}"] = round(taobot._interval_resources[e], 4)
         for i, leg in enumerate(taobot.legs):
@@ -344,7 +345,7 @@ def run_visual(world: World, config: WorldConfig) -> None:
                 taobots = world.taobots
                 if taobots:
                     from common import ElementType
-                    earth_vals = [t.organs[ElementType.EARTH] for t in taobots]
+                    earth_vals = [t.organ(ElementType.EARTH) for t in taobots]
                     renderer.push_organ_sample(
                         sum(earth_vals) / len(earth_vals), min(earth_vals), max(earth_vals)
                     )
@@ -449,7 +450,7 @@ def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
                 selected_id = next(iter(world._taobots), None)
             taobots = world.taobots
             if taobots:
-                earth_vals = [t.organs[ElementType.EARTH] for t in taobots]
+                earth_vals = [t.organ(ElementType.EARTH) for t in taobots]
                 renderer.push_organ_sample(
                     sum(earth_vals) / len(earth_vals), min(earth_vals), max(earth_vals)
                 )
