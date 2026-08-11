@@ -11,7 +11,7 @@ The long-term vision has two halves:
 **Game layer** (future, contingent on simulation working): Arena mode where people upload champion taobots to compete in parameterized worlds ("fire arena," "forest world"), trade genetic codes, trace bloodlines, and eventually do direct genetic engineering through a UI.
 
 **Key architectural decisions made now that enable the game layer later:**
-- Genome format is a clean, self-contained, portable JSON artifact — no runtime IDs, fully declarable
+- Genome format is a clean, self-contained, portable JSON artifact — no runtime IDs. It declares the *rules* that generate a body, not the finished body; see [Design Goals](#design-goals-evolvability-first)
 - World is a config object (spawn rates, hazard densities, element chemistry rates) not hardcoded constants — arena types are just different configs
 - Gene bank stores rich lineage metadata (timestamps, arena context, peak karma) from Phase 4 onward
 - Karma is multidimensional enough that champions have recognizable styles, not just a single scalar
@@ -28,6 +28,68 @@ The long-term vision has two halves:
 | `README.md` | How to run what exists today, plus the world's lore |
 
 Phases below cite requirement IDs. When a requirement changes, it changes in `docs/domain-spec.md`.
+
+---
+
+## Design Goals: Evolvability First
+
+The simulation exists to evolve things. Architectural decisions are judged against whether they
+make evolution work — not against biological fidelity. The aim is a system with the *properties* of
+a developing organism, not a faithful model of one. **We are not building a drosophila embryo in
+silico.** Where a cheaper mechanism delivers the same properties, take the cheaper mechanism.
+
+Three properties, in priority order:
+
+1. **Generativity** — one gene can produce many parts. A single gene expressing as six legs at
+   evenly spaced angles (`BODY-6`) is the point, not an optimization. Reuse is what lets a genome
+   stay small while a body grows complex.
+2. **Robustness** — a mutation must never produce an invalid body. Deleting a gene that others
+   reference, or nudging a part's position, has to yield something that still runs. Wherever a
+   reference can dangle, there must be a rule for what happens when it does.
+3. **Evolvability** — a small genotype change produces a small, *coherent* phenotype change.
+   This comes mostly from reuse: when one gene governs a coordinated set of parts, a nudge moves
+   the whole set together instead of breaking symmetry at random.
+
+These are the criteria to argue from when a design choice is contested.
+
+### The genome is a recipe, not a blueprint
+
+The mental model that governs everything downstream:
+
+> **A genome is a set of instructions for developmentally generating a taobot.** It is not a
+> parts list, and genes do not map one-to-one onto body parts.
+
+Gene 42 says *"create a neuron with this start point, this end point, these setpoints."* Under
+radial symmetry that one instruction produces six neurons. Each of those neurons is a distinct
+runtime object with its own identity and its own state.
+
+This forces two separate ID spaces, which must not be collapsed:
+
+| Space | What it is | Lifetime |
+|---|---|---|
+| **Gene / spec id** | Stable, declarable, part of the genome. What genes use to reference each other. | Persists in the genome file |
+| **Part id** (UUID) | Assigned when an instruction is expressed into a concrete part. | Runtime only |
+
+A part records which instruction produced it, so provenance runs one way: gene → parts. Because
+expression is one-to-many, a part id can never be derived from a gene id.
+
+**`BodyFactory` is the expression engine, not a constructor.** Its job is two passes: instantiate
+parts from instructions, then resolve the references those instructions declared. Today the body
+spec in `DEFAULT_PARAMS["body"]` is a hand-written stand-in for a genome, and it should keep the
+shape a genome will have.
+
+**Consequence — the genome declares rules, and expression computes structure.** When a gene says
+"synapse to gene 57" and gene 57 expressed six times, something has to decide which. That decision
+is open question **Q8**, and the answer is expected to change across phases: explicit lookup while
+specs are hand-written, spatial resolution once mutation generates body plans nobody wrote, and
+gradient-driven development at Phase 6. Reference resolution is therefore a **replaceable strategy
+behind one interface**, not logic baked into part classes.
+
+This is also why the portable-genome goal in [Context](#context) is stated the way it is. The
+genome stays portable, self-contained, and free of runtime ids, and expression stays deterministic
+given the genome — but under spatial or developmental resolution it does not *declare* its own
+wiring. It declares the rules that generate it. That is the intended design, and Phase 6 deepens it
+rather than reversing it.
 
 ---
 
@@ -139,6 +201,21 @@ separate buffer. This decision gates the meridian subsystem and Phase 4's gene e
 | Water | Locomotion | Governs speed; at 0 → immobile; drain scales with speed fraction |
 | Earth | Metabolism / meridians | Drain multiplier rises as it degrades; collapse triggers Wood crisis |
 | Metal | Armor | Absorbs incoming damage before Wood takes it |
+
+> **⚠ This table describes current code, and current code is wrong. Do not build from it.**
+> The architect pass of 2026-08-10 found that the **Wood and Earth roles are swapped** relative to
+> every other source — `docs/domain-spec.md`'s element-to-part map, `MER-1` (meridians consume
+> Wood), `STR-1`/`STR-2` (the body is Earth), and this file's own epic table (E3 Meridians = Wood).
+> The correct mapping is **Earth = body/structure** (death condition, damage target, flee trigger)
+> and **Wood = meridians/transport** (metabolic multiplier, collapse trigger).
+>
+> The table is also wrong about Water: **nothing writes `organs[WATER]`**. `_metabolize` drains
+> Fire, Earth, Wood and Metal only (`taobot_simple.py:441-461`); `ORGAN_STORAGE_DRAIN["WATER"]` is
+> dead. The Water organ has logged a constant 100.0 in every run to date — it went vestigial when
+> `LegPart` took over locomotion cost. `world.get_stats()` also omits Metal entirely.
+>
+> Story **E1-S0** corrects all three. This table is rewritten when that story lands, not before —
+> per the rule above, the plan describes what exists.
 
 Constants in `taobot_simple.py`: `ORGAN_MAX=100`, `ORGAN_DEGRADE_RATE=1.0` (per tick when the
 governing element's storage is empty), `ORGAN_REGEN_RATE=0.2` (when storage is above
@@ -263,10 +340,17 @@ completion: **Q4** (destructive-cycle rate), **Q6** (storage/chi boundary).
 body_parts.py      BUILT     BodyPart base + LegPart only
 body_factory.py    BUILT     BodyFactory: body spec -> list[BodyPart], stable part IDs
 renderer.py        BUILT     Polar body rendering, organ graph
-taobot_simple.py   BUILT     Organ system lives here (not in the planned taobot.py)
+taobot_simple.py   BUILT     Organ system lives here; renamed to taobot.py in E1-S0a
 chi.py             MISSING   ChiPool, destructive-cycle chemistry tick
-taobot.py          MISSING   Superseded — organs were added to taobot_simple.py instead
+taobot.py          PENDING   Not a second class — taobot_simple.py becomes it by subtraction
 ```
+
+**On the two-class plan.** The original file table imagined `taobot_simple.py` being retired in
+favour of a separately-built `taobot.py`. That assumed a big-bang cutover, which the per-subsystem
+staging never offers — each epic substitutes one subsystem while the rest keep running, so there is
+never a moment where both a simple and a full taobot exist to switch between. There is **one**
+organism class; it *thins* as organs, chi and control move out behind their ports, and what remains
+is the full Taobot. See `AD-17` in the architecture spine.
 
 <a name="phase-2-status"></a>
 ### Phase 2 status against exit criteria
@@ -345,7 +429,7 @@ tests/
 
 **Goal:** Encode taobot body specs and neural wiring as genomes. Implement crossover, mutation, and karma-weighted reproduction. Gene bank persists between sessions.
 
-**Genetic encoding:** A `Genome` is a list of `Gene` dataclasses. Each gene encodes one body part: polar position, size, element type, symmetry (radial or bilateral), and part-specific params (synapse targets by gene_id, dendrite coordinates, force scale, etc.). Symmetry expansion (a single gene → 6 legs at evenly-spaced angles) happens in `BodyFactory`.
+**Genetic encoding:** A `Genome` is a list of `Gene` dataclasses. Each gene is an **instruction for producing parts** — not a part. A gene carries polar position, size, element type, symmetry (radial or bilateral), and part-specific params (synapse targets by gene_id, dendrite coordinates, force scale, etc.). One gene may express as many parts: symmetry expansion (a single gene → 6 legs at evenly-spaced angles) happens in `BodyFactory`, and each expressed part gets its own runtime id while recording the gene it came from. See [the genome is a recipe, not a blueprint](#the-genome-is-a-recipe-not-a-blueprint). How a `gene_id` reference resolves when the target gene expressed more than once is open question **Q8**.
 
 **Gene bank:** Persistent JSON dict of `{genome_id: GeneRecord}`. Each record: genome, karma, generation, parent_ids, timestamps. Cap at 500 records (prune lowest karma). Karma is multidimensional — track survival time, resources gathered, offspring spawned, combat won as separate signals. This lets champions have legible styles.
 

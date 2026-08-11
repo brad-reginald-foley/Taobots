@@ -192,4 +192,44 @@ can be built.
 | Q4 | What is the destructive-cycle degradation rate? Noted as the most sensitive balance parameter in `PLAN.md` — too high and taobots die of internal imbalance, too low and element composition carries no evolutionary pressure. | CHI-4, CHI-6 | After the organ epics (E1–E3) |
 | Q7 | Once neurons exist, how much conversion stays autonomous and how much becomes neurally controlled — and does the passive unconditional cycle survive alongside both? **Staging is already decided**: mechanisms are built with autonomous triggers now and neural control is wired later (see design principle). What remains open is the end state, not the build order. | NEU-12, CHI-7, MER-10, MER-17 | Neurons epic (E4) |
 | Q5 | What domains does a gene carry? | GEN-2, BODY-1 | Phase 4 planning session |
-| Q6 | Once the chi pool exists, is `storage` the chi pool, or does chi sit behind meridians as a separate buffer? And does the chi economy stay as methods on `TaobotSimple` (`_drain_organ`, `_metabolize`, `_cycle_elements`) or become a subsystem the taobot owns? | MER-4, MER-13, MER-14, CHI-1, CHI-2 | **E3 planning — architect pass** |
+| Q6 | Once the chi pool exists, is `storage` the chi pool, or does chi sit behind meridians as a separate buffer? And does the chi economy stay as methods on `TaobotSimple` (`_drain_organ`, `_metabolize`, `_cycle_elements`) or become a subsystem the taobot owns? | MER-4, MER-13, MER-14, CHI-1, CHI-2 | **Answered 2026-08-10** — architect pass; see below |
+| Q8 | When one gene expresses **several** parts, how does a gene-space reference resolve to runtime parts? Candidates: **symmetry-matched** (the *i*-th expression of the source wires to the *i*-th of the target — needs an expression index on the part), **spatial** (nearest by polar distance), **all-to-all** (combinatorial, almost certainly not). The answer is expected to *change by phase* — explicit lookup while specs are hand-written, spatial once mutation generates body plans nobody wrote, gradient-driven at Phase 6 — so resolution is a replaceable strategy behind one interface rather than a single permanent choice. | MER-9, NEU-9, BODY-6, GEN-2 | **E3 planning** owns the seam; the strategy choice defers to Phase 4/6 |
+
+---
+
+## Answered questions
+
+### Q6 — the storage/chi boundary, and where the chi economy lives
+
+**Answered 2026-08-10, architect pass.** Both halves resolve.
+
+**Chi has two tiers.**
+
+| Tier | What it is | Behavior |
+|---|---|---|
+| **Chi pool** | The raw, mixed reservoir. What eating deposits into. | Volatile — co-present incompatible elements degrade each other along the destructive cycle (`CHI-4`, deferred). Holding chi you have no meridian for is a cost. |
+| **Element buffers** | Per-element stores that absorb *out* of the pool. Meridians (`MER-4`); `LegPart.reserve` is an early instance of the same idiom. | Stable, because single-element. Foreign chi injected into one is where `CHI-5` chemistry applies. |
+
+So `storage` **is** the chi pool — but today it is doing double duty, standing in for both tiers
+because meridians do not exist. It is designated the **pool** tier; the buffer tier separates out
+of it at E3. This is what gives the pool a job beyond bookkeeping: body plan and diet have to
+match, which is real selection pressure.
+
+**The economy becomes a subsystem, reached through a port.** Consumers never mutate a chi dict.
+They call `request(element, amount) -> granted` and `deposit(element, amount) -> accepted`.
+Conversion (`MER-14`, and E1-S2's demand-triggered path) is a capability *of the chi tier*, not of
+`TaobotSimple`.
+
+- **Now:** `ChiPool` owns the ledger and implements the port. Essence conservation becomes a
+  unit-testable property of one small class instead of a whole-run invariant harness.
+- **At E3:** `MeridianNetwork` implements the same port, sitting on the pool. Callers do not change.
+- **Parts are handed their port** rather than reaching for a global one. That is what later makes
+  "this leg starves because it is attached to the wrong meridian" expressible without touching
+  `LegPart`.
+
+**A denied request is correct behavior, not a bug.** At E3, `request()` may return zero because the
+taobot has no meridian of that element. That is the intended pressure and must not be "fixed".
+
+**Supply resolution is the staging axis.** System-level and uniform now — all legs fed together,
+partial supply split **pro-rata by demand** rather than in equal shares. Per-part and
+topology-determined later, once attachment exists. Same seam, finer grain.
