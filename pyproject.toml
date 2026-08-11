@@ -1,6 +1,8 @@
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Tool-installed and scratch trees: not our source, not our style budget.
+extend-exclude = ["_bmad", ".claude", "notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
@@ -8,12 +10,14 @@ select = ["E", "F", "W", "I"]
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+extend-exclude = "/(_bmad|\\.claude|notebooks)/"
 
 [tool.mypy]
 python_version = "3.11"
 strict = false
 ignore_missing_imports = true
 warn_unused_ignores = true
+exclude = "^(_bmad|\\.claude|notebooks)/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

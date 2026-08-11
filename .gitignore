@@ -43,3 +43,17 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Ad-hoc screenshots
+screen_grabs/
+
+# Claude Code / BMad
+# _bmad/ and .claude/skills/ are committed so the workflow travels with the repo.
+# Ignored below: machine-local settings and per-user install answers.
+.claude/settings.local.json
+_bmad/config.user.toml
+_bmad/custom/config.user.toml
+_bmad/render/
