@@ -158,7 +158,7 @@ during Phase 2 and is not in the original notes; see `body_parts.py`.
 | CHI-1 | The chi pool has a total amount value | 2 | Planned |
 | CHI-2 | Chi holds the five elements at varying proportions | 2 | Partial — per-element storage exists |
 | CHI-3 | Organs absorb elements present in the chi | 2 | Built |
-| CHI-4 | Elements co-present in the chi degrade each other along the **destructive** cycle | post-E3 | **Deferred by design** — `degrade_rate` parsed but deliberately unused; insertion point `world.py:282` |
+| CHI-4 | Elements co-present in the chi degrade each other along the **destructive** cycle | post-E3 | **Deferred by design** — `degrade_rate` is a law in `configs/laws.json`, parsed but deliberately unused; insertion point marked in `World.tick` |
 | CHI-5 | The same chemistry applies inside meridians — Wood chi injected into a Fire meridian feeds it; Water chi dampens it | post-E3 | Deferred with CHI-4 |
 | CHI-6 | The destructive-cycle degradation rate | post-E3 | **Open** — see Q4 |
 | CHI-7 | Organs push chi through a system of conversion and use — conversion serves organ demand rather than running as an isolated process | 2 | Partial — passive conversion built; demand-driven gating open, see Q7 |

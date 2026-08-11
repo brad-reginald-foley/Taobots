@@ -1,5 +1,6 @@
 {
   "name": "fire_arena",
+  "laws": "laws.json",
   "world": {
     "width": 80,
     "height": 60
@@ -30,6 +31,12 @@
     "target_population": 20
   },
   "chemistry": {
+    "_override": [
+      "DELIBERATE ARENA OVERRIDE of the shared law in laws.json (degrade_rate 0.001).",
+      "The fire arena exists to be harsher than the world it sits beside, so its chi",
+      "degrades twice as fast. This is not a leftover duplicate: remove this block and",
+      "the arena correctly inherits the law — AD-13."
+    ],
     "degrade_rate": 0.002
   }
 }

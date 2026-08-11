@@ -206,16 +206,28 @@ JSON files in `configs/`. Key fields:
 ```json
 {
   "name": "default",
+  "laws": "laws.json",
   "world":     { "width": 80, "height": 60 },
-  "resources": { "initial_count": 50, "respawn_delay_ticks": 120,
+  "resources": { "initial_count": 150, "respawn_delay_ticks": 60,
                  "spawn_weights": { "WOOD": 1, "WATER": 1, ... } },
   "hazards":   { "initial_count": 20, "spawn_weights": { ... } },
-  "taobots":   { "initial_count": 20, "target_population": 20 },
-  "chemistry": { "degrade_rate": 0.001 }
+  "taobots":   { "initial_count": 20, "target_population": 20 }
 }
 ```
 
 `target_population` is maintained at runtime — the world respawns a replacement whenever a taobot dies.
+
+**Laws vs. world settings.** Tunables shared by every world live in `configs/laws.json` — currently
+just `chemistry.degrade_rate`. A config opts in with the `laws` key, a plain filename resolved *beside
+that config file*, never against the working directory; omit the key to declare no laws. The config's
+own blocks are merged over the laws **key by key**: declaring a block overrides only the keys it names
+and inherits the rest of that block. `configs/fire_arena.json` overrides `degrade_rate` this way and
+says in the file why that is deliberate. Unrecognised law keys are ignored, so a new law needs no code
+change.
+
+**`configs/workshop.json` is a scaled-down `default_world`, not a different world.** Its resource and
+hazard counts are set so the per-unit-area rates match, and `tests/test_world.py` asserts that as a
+property so the two cannot drift apart. Only size and population deliberately differ.
 
 ---
 

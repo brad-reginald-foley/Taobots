@@ -67,9 +67,90 @@ class TaobotConfig:
 
 @dataclass
 class ChemistryConfig:
-    """Elemental chemistry settings. degrade_rate is reserved for Phase 2 chi interactions."""
+    """Elemental chemistry settings.
+
+    degrade_rate is a *law*: its shared value lives in `configs/laws.json` and every
+    world inherits it, but a world that needs to diverge may override it deliberately
+    in its own config (`configs/fire_arena.json` does). It is reserved for Phase 2 chi
+    interactions — nothing reads it yet."""
 
     degrade_rate: float
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Return `base` with `override` merged over it, recursing into nested dicts.
+
+    The merge is **key by key**, not block by block: where both sides hold a dict
+    under the same key it recurses, so a config that declares `{"chemistry":
+    {"degrade_rate": 0.002}}` overrides only `degrade_rate` and still inherits every
+    other law in that block. That distinction is invisible while `chemistry` has one
+    key and load-bearing the moment it has two. Keys the loader does not model are
+    carried through untouched, so `laws.json` can gain a law without a loader change."""
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_laws(config_path: Path, laws_name: object) -> dict:
+    """Load and validate the laws file `config_path` names via its `laws` key.
+
+    The name must be a non-empty *relative* filename: it is resolved beside the
+    config, and an absolute path or a `..` segment would escape the directory the
+    "same result from any working directory" guarantee rests on. Omitting the `laws`
+    key entirely is how a config declares it has no laws; `null` is malformed."""
+    if not isinstance(laws_name, str) or not laws_name.strip():
+        raise ValueError(
+            f"WorldConfig 'laws' must be a non-empty filename relative to "
+            f"'{config_path.parent}', got {laws_name!r} in '{config_path}' "
+            f"(omit the 'laws' key entirely to declare no laws)"
+        )
+
+    candidate = Path(laws_name)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise ValueError(
+            f"WorldConfig 'laws' must resolve inside the config's own directory: "
+            f"{laws_name!r} in '{config_path}' is absolute or escapes with '..'"
+        )
+
+    laws_path = config_path.parent / candidate
+    if not laws_path.exists():
+        raise ValueError(
+            f"WorldConfig laws file not found: '{laws_path}' "
+            f"(named by 'laws' in '{config_path}')"
+        )
+    if not laws_path.is_file():
+        raise ValueError(
+            f"WorldConfig laws path is not a file: '{laws_path}' "
+            f"(named by 'laws' in '{config_path}')"
+        )
+
+    try:
+        with open(laws_path) as f:
+            laws = json.load(f)
+    except json.JSONDecodeError as exc:
+        # Name the laws file, not the config: a syntax error in the shared law would
+        # otherwise be reported against whichever world happened to load it.
+        raise ValueError(
+            f"WorldConfig laws file is not valid JSON: '{laws_path}': {exc}"
+        ) from exc
+
+    if not isinstance(laws, dict):
+        raise ValueError(
+            f"WorldConfig laws file must contain a JSON object: '{laws_path}'"
+        )
+
+    if "laws" in laws:
+        raise ValueError(
+            f"WorldConfig laws file '{laws_path}' declares its own 'laws' key; "
+            f"laws files do not chain — every law belongs in the one file"
+        )
+
+    return laws
 
 
 @dataclass
@@ -86,13 +167,33 @@ class WorldConfig:
 
     @classmethod
     def from_json(cls, path: str | Path) -> "WorldConfig":
-        """Load a WorldConfig from a JSON file. Raises ValueError on missing required keys."""
-        with open(path) as f:
+        """Load a WorldConfig from a JSON file. Raises ValueError on missing required keys.
+
+        A config may name a shared laws file with a top-level `laws` key — a plain
+        filename, resolved **relative to the config file's own directory**, never the
+        working directory, so a config loads identically from anywhere. The laws are
+        the base and the config's own blocks are merged over them **key by key**: a
+        block the config declares overrides only the keys it names and inherits the
+        rest of that block from the laws. `configs/fire_arena.json` overrides one law
+        this way. Omit the `laws` key to declare that a config has no laws."""
+        config_path = Path(path)
+        with open(config_path) as f:
             data = json.load(f)
 
-        for key in ("name", "world", "resources", "hazards", "taobots", "chemistry"):
+        if "laws" in data:
+            data = _deep_merge(_load_laws(config_path, data.pop("laws")), data)
+
+        # 'chemistry' is not listed: laws.json supplies it, so a world config need
+        # not carry one. It is checked below, after the merge, from either source.
+        for key in ("name", "world", "resources", "hazards", "taobots"):
             if key not in data:
                 raise ValueError(f"WorldConfig missing required key: '{key}'")
+
+        if "chemistry" not in data:
+            raise ValueError(
+                "WorldConfig missing required key: 'chemistry' — declare it in the "
+                "config or inherit it from a laws file via the 'laws' key"
+            )
 
         def parse_weights(raw: dict[str, float]) -> dict[ElementType, float]:
             """Convert a JSON {name: weight} dict to {ElementType: weight}."""

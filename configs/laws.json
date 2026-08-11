@@ -1,0 +1,14 @@
+{
+  "_note": [
+    "Laws of Pangu — tunables shared by every world, not per-world settings.",
+    "A world config opts in with a top-level \"laws\": \"laws.json\" key; the file is",
+    "resolved beside that config, never against the working directory.",
+    "Blocks a config declares itself are merged OVER these, so a world can override a",
+    "law — but only deliberately, and only with the reason written into that config",
+    "(see configs/fire_arena.json). Test: would making this evolvable let organisms",
+    "escape a constraint the simulation exists to impose? If yes, it belongs here — AD-13."
+  ],
+  "chemistry": {
+    "degrade_rate": 0.001
+  }
+}

@@ -273,11 +273,12 @@ Organs exist to push chi through a system of conversion and use. **For now only 
 that consume and convert chi are being built one at a time, and adding destructive chemistry
 before they exist would make it impossible to tell which system caused a given behavior.
 
-**Destructive (Ke) cycle — deferred.** `degrade_rate` is present in every world config and parsed
-into `WorldConfig`, but deliberately not consumed. It is the most sensitive balance parameter:
-too high and taobots die of internal imbalance, too low and element composition carries no
-evolutionary pressure. It lands once the organ epics are complete and there is a stable baseline
-to perturb. Insertion point is marked at `world.py:282`.
+**Destructive (Ke) cycle — deferred.** `degrade_rate` is a law in `configs/laws.json`, inherited by
+every world config that does not deliberately override it (`fire_arena` runs it hotter), and parsed
+into `WorldConfig`, but deliberately not consumed. It is the most
+sensitive balance parameter: too high and taobots die of internal imbalance, too low and element
+composition carries no evolutionary pressure. It lands once the organ epics are complete and there
+is a stable baseline to perturb. Insertion point is marked in `World.tick`.
 
 **Chi pool:** `dict[ElementType, float]` with a capacity cap. Whether this is the existing
 `storage` or a separate buffer behind meridians is open question **Q6**.

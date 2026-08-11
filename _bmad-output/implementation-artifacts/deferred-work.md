@@ -73,3 +73,21 @@ Append-only. Each entry names work that was split out of a spec, and why.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0b-derive-the-water-organ-from-the-legs.md`
   summary: A legless taobot is now a supported, tested state for organ reads but is never ticked, leaving `_moment_of_inertia == 0` unexercised.
   evidence: `test_water_organ_zero_with_no_legs` constructs `params={"body": []}` and asserts the organ reads `0.0` without ticking. The steering path guards with `max(1e-9, self._moment_of_inertia)` and `_act` guards with `if n > 0`, so it looks safe — but nothing exercises it. Worth one test that ticks a legless bot end to end.
+
+<!-- Below: surfaced by the Story 1.0c code review (2026-08-11). -->
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0c-align-the-workshop-with-the-world-it-calibrates.md`
+  summary: A single bot in the workshop frequently dies within a few hundred to a few thousand ticks, even after the arena was aligned to `default_world`'s densities — which threatens the epic's own method of deriving constants by tick-stepping one bot through a degrade→repair cycle.
+  evidence: Measured over 3000 ticks at five seeds, before and after the clustering alignment: flat scatter died at ticks 99, 2720, 2137, 278 and survived once; clustered died at 99, 1372, 2064, 2055 and survived once. Clustering is not the cause — it wins two seeds and loses two. This is pre-existing and was worse before 1.0c, when the workshop was 3.2× more hazard-dense. Directly Story 1.1's question: it is chartered to investigate the damage model and explain why bots die. Stories 1.2–1.4 need a bot that survives long enough to observe a full round trip, so this may need a workshop-specific answer (a hazard-free calibration config, or a longer-lived starting state) rather than just an explanation.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0c-align-the-workshop-with-the-world-it-calibrates.md`
+  summary: Per-unit-area parity does not give per-bot parity — the workshop offers 23 resources to one bot where `default_world` offers 7.5 per bot.
+  evidence: `AD-14` asks that "the rates a bot experiences" match, and density plus clustering now do. But competition, contention and depletion pressure differ ~3× because population is deliberately 1 rather than 20. Constants insensitive to crowding transfer; constants that depend on resources being contested do not. Recorded in `configs/workshop.json`'s notes, and worth re-reading before Stories 1.2 and 1.3 derive their thresholds.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0c-align-the-workshop-with-the-world-it-calibrates.md`
+  summary: `degrade_rate` is called "the most sensitive balance parameter" in `PLAN.md` yet has no range validation, and the new laws mechanism has three different JSON-comment conventions.
+  evidence: Nothing rejects a negative, a string or an absurd value for a law every world inherits — the one place a range check earns its keep. Separately this change introduced `_note` (top-level in `laws.json`), `_override` (nested inside `fire_arena`'s `chemistry`) and `notes` (top-level in `workshop.json`); pick one key name and one nesting rule before a schema validator has to know all three.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0c-align-the-workshop-with-the-world-it-calibrates.md`
+  summary: `tests/test_world.py` now mixes `SpatialHash`, `World` and roughly 250 lines of config/laws-resolution tests; config loading deserves its own file.
+  evidence: A `tests/test_config.py` would also be the natural home for fixing `tests/conftest.py`'s CWD-relative `WorldConfig.from_json("configs/default_world.json")` — currently a known CWD bug sitting in the same suite that now exists to prove CWD independence. Story 1.0d owns the conftest fix and could do the split at the same time.

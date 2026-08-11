@@ -1,25 +1,46 @@
 {
   "name": "workshop",
+  "laws": "laws.json",
+  "notes": [
+    "The workshop is a microscope, not a different world (AD-14): the rates a bot meets here",
+    "match configs/default_world.json, so constants derived by stepping through workshop mode",
+    "transfer to the world they will run in.",
+    "Aligned: resources 23/750 u^2 = 0.0307 vs default 150/4800 = 0.0313; hazards 3/750 = 0.0040",
+    "vs default 20/4800 = 0.0042; respawn_delay_ticks 60 in both; and cluster_affinity copied",
+    "from default_world for both pools. Clustering matters as much as the count — a bot wandering",
+    "among clumped resources meets feast and famine, while a bot in an evenly scattered arena",
+    "meets a steady trickle. Global density can match while the local rate a single bot",
+    "experiences does not, which is the transfer failure AD-14 exists to prevent.",
+    "Recorded divergence that remains, and why:",
+    "  - Area 750 u^2 vs 4800, and population 1 vs 20. Deliberate — AD-14 permits size and",
+    "    population to differ; a single bot in a small arena is what makes this a sandbox you",
+    "    can watch tick by tick. Note this leaves resources-per-bot at 23 here vs 7.5 in",
+    "    default_world, so constants sensitive to crowding or contention still need care.",
+    "  - Counts are whole entities, so the densities land within one entity of default_world",
+    "    rather than exactly on it (23.44 and 3.13 are the unrounded targets).",
+    "Before Story 1.0c this arena was 3.2x more hazard-dense, 35% more resource-scarce, respawned",
+    "twice as fast and scattered everything uniformly; workshop runs are not comparable across",
+    "that change."
+  ],
   "world": {"width": 30, "height": 25},
   "resources": {
-    "initial_count": 15,
-    "respawn_delay_ticks": 30,
+    "initial_count": 23,
+    "respawn_delay_ticks": 60,
     "spawn_weights": {
       "WOOD": 1.0, "WATER": 1.0, "METAL": 1.0, "FIRE": 1.0, "EARTH": 1.0
     },
     "cluster_affinity": {
-      "WOOD": 0.0, "WATER": 0.0, "METAL": 0.0, "FIRE": 0.0, "EARTH": 0.0
+      "WOOD": 0.5, "WATER": 1.0, "METAL": 1.5, "FIRE": 0.0, "EARTH": 0.8
     }
   },
   "hazards": {
-    "initial_count": 10,
+    "initial_count": 3,
     "spawn_weights": {
       "WOOD": 1.0, "WATER": 1.0, "METAL": 1.0, "FIRE": 1.0, "EARTH": 1.0
     },
     "cluster_affinity": {
-      "WOOD": 0.0, "WATER": 0.0, "METAL": 0.0, "FIRE": 0.0, "EARTH": 0.0
+      "WOOD": 0.5, "WATER": 1.0, "METAL": 1.5, "FIRE": 0.0, "EARTH": 0.8
     }
   },
-  "taobots": {"initial_count": 1, "target_population": 1},
-  "chemistry": {"degrade_rate": 0.001}
+  "taobots": {"initial_count": 1, "target_population": 1}
 }
