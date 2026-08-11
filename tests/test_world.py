@@ -83,7 +83,7 @@ def test_world_taobot_death_triggers_respawn(default_config):
         world.spawn_taobot()
     dying = world.spawn_taobot(x=5.0, y=5.0)
     dying_id = dying.entity_id
-    dying.organs[ElementType.WOOD] = 0.0
+    dying.organs[ElementType.EARTH] = 0.0
 
     world._check_taobot_deaths()
 
@@ -118,7 +118,7 @@ def test_world_death_callback_fires(default_config):
 
     fired: list[int] = []
     world.on_taobot_death = lambda t: fired.append(t.entity_id)
-    dying.organs[ElementType.WOOD] = 0.0
+    dying.organs[ElementType.EARTH] = 0.0
     world._check_taobot_deaths()
 
     assert dying_id in fired

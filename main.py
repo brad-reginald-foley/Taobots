@@ -344,9 +344,9 @@ def run_visual(world: World, config: WorldConfig) -> None:
                 taobots = world.taobots
                 if taobots:
                     from common import ElementType
-                    wood_vals = [t.organs[ElementType.WOOD] for t in taobots]
+                    earth_vals = [t.organs[ElementType.EARTH] for t in taobots]
                     renderer.push_organ_sample(
-                        sum(wood_vals) / len(wood_vals), min(wood_vals), max(wood_vals)
+                        sum(earth_vals) / len(earth_vals), min(earth_vals), max(earth_vals)
                     )
 
             fps = clock.get_fps()
@@ -449,9 +449,9 @@ def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
                 selected_id = next(iter(world._taobots), None)
             taobots = world.taobots
             if taobots:
-                wood_vals = [t.organs[ElementType.WOOD] for t in taobots]
+                earth_vals = [t.organs[ElementType.EARTH] for t in taobots]
                 renderer.push_organ_sample(
-                    sum(wood_vals) / len(wood_vals), min(wood_vals), max(wood_vals)
+                    sum(earth_vals) / len(earth_vals), min(earth_vals), max(earth_vals)
                 )
                 if selected_id is not None and selected_id in world._taobots:
                     ws_logger.log_tick(world._taobots[selected_id], world.tick_count)

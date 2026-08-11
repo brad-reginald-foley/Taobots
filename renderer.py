@@ -84,7 +84,7 @@ class Renderer:
 
         self._panel_rect = pygame.Rect(window_w, 0, panel_w, window_h)
 
-        # Rolling Wood-organ history: (mean, min, max) per tick
+        # Rolling Earth-organ history: (mean, min, max) per tick
         self._organ_history: collections.deque[tuple[float, float, float]] = (
             collections.deque(maxlen=200)
         )
@@ -94,7 +94,7 @@ class Renderer:
         self._show_grid = not self._show_grid
 
     def push_organ_sample(self, mean: float, mn: float, mx: float) -> None:
-        """Append one tick's population Wood organ stats to the rolling graph buffer."""
+        """Append one tick's population Earth organ stats to the rolling graph buffer."""
         self._organ_history.append((mean, mn, mx))
 
     @property
@@ -278,7 +278,7 @@ class Renderer:
                                                (px + sz, py + sz), (px - sz, py + sz)])
 
     def _draw_taobots(self, taobots: list["TaobotSimple"], selected_id: int | None) -> None:
-        """Draw each taobot as a circle with a heading line, Wood organ bar, and optional ring."""
+        """Draw each taobot as a circle with a heading line, Earth organ bar, and optional ring."""
         for t in taobots:
             px, py = world_to_screen(t.x, t.y, self._scale_x, self._scale_y)
             color = TAOBOT_FLEE_COLOR if t.behavior_state == "fleeing" else TAOBOT_COLOR
@@ -304,20 +304,20 @@ class Renderer:
             hy = py + int(math.sin(t.heading) * 10)
             pygame.draw.line(self._screen, WHITE, (px, py), (hx, hy), 1)
 
-            # Wood organ bar (structural integrity / death condition)
-            wood_frac = max(0.0, t.organs[ElementType.WOOD] / 100.0)
+            # Earth organ bar (structural integrity / death condition)
+            earth_frac = max(0.0, t.organs[ElementType.EARTH] / 100.0)
             bar_w = 12
             bar_x = px - bar_w // 2
             bar_y = py - 12
             red = (200, 40, 40)
             green = (40, 200, 40)
             bar_color = (
-                int(red[0] + (green[0] - red[0]) * wood_frac),
-                int(red[1] + (green[1] - red[1]) * wood_frac),
-                int(red[2] + (green[2] - red[2]) * wood_frac),
+                int(red[0] + (green[0] - red[0]) * earth_frac),
+                int(red[1] + (green[1] - red[1]) * earth_frac),
+                int(red[2] + (green[2] - red[2]) * earth_frac),
             )
             pygame.draw.rect(self._screen, (60, 60, 60), pygame.Rect(bar_x, bar_y, bar_w, 2))
-            filled_w = int(bar_w * wood_frac)
+            filled_w = int(bar_w * earth_frac)
             pygame.draw.rect(self._screen, bar_color, pygame.Rect(bar_x, bar_y, filled_w, 2))
 
             # Selection ring
@@ -529,9 +529,9 @@ class Renderer:
             )
 
     def _draw_organ_graph(self) -> None:
-        """Draw the rolling Wood organ graph in the lower panel.
+        """Draw the rolling Earth organ graph in the lower panel.
 
-        Wood organ is the structural integrity / death condition (0–100).
+        Earth organ is the structural integrity / death condition (0–100).
         The shaded band spans min to max across the population; the bright line
         is the mean. X axis is time (older samples left); Y axis is 0–100."""
         if not self._organ_history:
@@ -543,7 +543,7 @@ class Renderer:
 
         pygame.draw.rect(self._screen, (10, 25, 25), pygame.Rect(gx, gy, gw, _GRAPH_H))
 
-        surf = self._font_sm.render("Wood organ", True, DIM_WHITE)
+        surf = self._font_sm.render("Earth organ", True, DIM_WHITE)
         self._screen.blit(surf, (gx, gy - 16))
 
         history = list(self._organ_history)

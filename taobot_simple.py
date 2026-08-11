@@ -26,22 +26,23 @@ ORGAN_REGEN_RATE: float = 0.2
 # Storage must be above this fraction of capacity to trigger regeneration
 REGEN_STORAGE_THRESHOLD: float = 0.3
 
-# Earth collapse → Wood crisis conditions
-WOOD_CRISIS_EARTH_THRESHOLD: float = 20.0   # Earth organ below this…
-WOOD_CRISIS_STORAGE_FRACTION: float = 0.1   # …AND total storage below this fraction of capacity
-WOOD_CRISIS_DRAIN: float = 0.1              # Wood organ lost per tick during crisis
+# Wood collapse → Earth crisis conditions
+EARTH_CRISIS_WOOD_THRESHOLD: float = 20.0    # Wood organ below this…
+EARTH_CRISIS_STORAGE_FRACTION: float = 0.1   # …AND total storage below this fraction of capacity
+EARTH_CRISIS_DRAIN: float = 0.1              # Earth organ lost per tick during crisis
 
 # Fire organ below this value → locked into searching (random walk only)
 FIRE_LOCKOUT_THRESHOLD: float = 20.0
 
 # Base storage drain per tick for each organ (drawn from the governing element's storage)
 # Water drain is further scaled by current speed fraction (locomotion is activity-dependent).
-# Wood drain covers structural maintenance; Metal covers armor upkeep.
+# Earth drain covers structural maintenance; Wood covers meridian/metabolic upkeep;
+# Metal covers armor upkeep. Rates follow the role, not the element.
 ORGAN_STORAGE_DRAIN: dict[str, float] = {
     "FIRE":  0.015,
     "WATER": 0.012,
-    "EARTH": 0.010,
-    "WOOD":  0.004,
+    "WOOD":  0.010,
+    "EARTH": 0.004,
     "METAL": 0.002,
 }
 
@@ -66,7 +67,7 @@ DEFAULT_PARAMS: dict = {
     "hazard_avoidance_range": 4.0,
     "storage_capacity": {e.name: 20.0 for e in ElementType},
     "collect_radius": 1.0,
-    "flee_wood_threshold": 25.0,
+    "flee_earth_threshold": 25.0,
     "random_walk_turn_rate": 0.4,
     # Phase 2 body parts. Two symmetric legs at ±0.4 rad, both pushing forward (phi=0).
     # With phi=0 each leg contributes exactly T to forward speed → T_base = speed/2 = 0.75.
@@ -95,7 +96,7 @@ ARCHETYPES: dict[str, dict] = {
     },
     "survivor": {
         "speed": 1.4,
-        "flee_wood_threshold": 50.0,
+        "flee_earth_threshold": 50.0,
         "hazard_avoidance_range": 7.0,
     },
     "hoarder": {
@@ -136,14 +137,14 @@ class TaobotSimple:
     Each tick: sense → decide → act → metabolize.
 
     Organ system (replaces single health value):
-      Wood   — body structure; death condition at 0; damaged by Metal attacks
+      Earth  — body structure; death condition at 0; damaged by Metal attacks
       Fire   — nervous system; governs sensing range; at 0 → locked to searching
       Water  — locomotion; governs speed; at 0 → immobile
-      Earth  — metabolism/meridians; drain multiplier rises as it degrades
-      Metal  — armor; absorbs incoming damage before Wood takes it
+      Wood   — meridians/transport; drain multiplier rises as it degrades
+      Metal  — armor; absorbs incoming damage before Earth takes it
 
     Behavioral states (in priority order):
-      fleeing    — Wood organ critical or hazard too close; steer away from danger
+      fleeing    — Earth organ critical or hazard too close; steer away from danger
       seeking    — resource visible but not yet adjacent; head toward best target
       collecting — adjacent to target resource; extract up to collect_rate/tick
       searching  — nothing visible (or Fire too low to see); correlated random walk
@@ -179,7 +180,7 @@ class TaobotSimple:
             ElementType[k]: v for k, v in p["storage_capacity"].items()
         }
         self.collect_radius: float = p["collect_radius"]
-        self.flee_wood_threshold: float = p["flee_wood_threshold"]
+        self.flee_earth_threshold: float = p["flee_earth_threshold"]
         self.random_walk_turn_rate: float = p["random_walk_turn_rate"]
 
         # Normalize affinities to sum=1 so absolute values don't affect scoring
@@ -255,7 +256,7 @@ class TaobotSimple:
         """Update behavior_state and heading based on current surroundings.
 
         Priority order:
-          1. Flee — Wood organ critical or hazard within avoidance range
+          1. Flee — Earth organ critical or hazard within avoidance range
           2. Fire lockout — nervous system too degraded to do anything but random walk
           3. Collect — already adjacent to a live target resource
           4. Seek — pick the best visible resource and head toward it
@@ -263,8 +264,8 @@ class TaobotSimple:
         """
         ww, wh = world.config.width, world.config.height
 
-        # Step 1: FLEE — critical Wood organ (structural integrity near zero)
-        if self.organs[ElementType.WOOD] < self.flee_wood_threshold:
+        # Step 1: FLEE — critical Earth organ (structural integrity near zero)
+        if self.organs[ElementType.EARTH] < self.flee_earth_threshold:
             self.behavior_state = "fleeing"
             if nearby_hazards:
                 nearest = nearby_hazards[0]
@@ -428,48 +429,48 @@ class TaobotSimple:
     def _metabolize(self) -> None:
         """Run one tick of organ metabolism.
 
-        Earth organ integrity sets a global drain multiplier: at full Earth all
-        drains are normal; at zero Earth all drains double. This multiplier applies
+        Wood organ integrity sets a global drain multiplier: at full Wood all
+        drains are normal; at zero Wood all drains double. This multiplier applies
         to Fire, Earth, Wood, and Metal organs.
 
         Water storage is consumed by LegParts (in _tick_body_parts) and is not drained here.
 
-        Wood crisis: if Earth is critically low AND total storage is nearly empty,
-        systemic metabolic failure directly damages the Wood organ on top of starvation."""
-        earth_mult = 1.0 + (ORGAN_MAX - self.organs[ElementType.EARTH]) / ORGAN_MAX
+        Earth crisis: if Wood is critically low AND total storage is nearly empty,
+        systemic metabolic failure directly damages the Earth organ on top of starvation."""
+        wood_mult = 1.0 + (ORGAN_MAX - self.organs[ElementType.WOOD]) / ORGAN_MAX
 
         self._drain_organ(
             ElementType.FIRE,
-            ORGAN_STORAGE_DRAIN["FIRE"] * earth_mult,
+            ORGAN_STORAGE_DRAIN["FIRE"] * wood_mult,
         )
 
         # Water storage is now drained by LegParts in _tick_body_parts(); no abstract drain here.
 
         self._drain_organ(
             ElementType.EARTH,
-            ORGAN_STORAGE_DRAIN["EARTH"] * earth_mult,
+            ORGAN_STORAGE_DRAIN["EARTH"] * wood_mult,
         )
 
         self._drain_organ(
             ElementType.WOOD,
-            ORGAN_STORAGE_DRAIN["WOOD"] * earth_mult,
+            ORGAN_STORAGE_DRAIN["WOOD"] * wood_mult,
         )
 
         self._drain_organ(
             ElementType.METAL,
-            ORGAN_STORAGE_DRAIN["METAL"] * earth_mult,
+            ORGAN_STORAGE_DRAIN["METAL"] * wood_mult,
         )
 
-        # Wood crisis: systemic failure when metabolism has collapsed and storage is empty
+        # Earth crisis: systemic failure when metabolism has collapsed and storage is empty
         total_storage = sum(self.storage.values())
         total_capacity = sum(self.storage_capacity.values())
         crisis = (
-            self.organs[ElementType.EARTH] < WOOD_CRISIS_EARTH_THRESHOLD
-            and total_storage < WOOD_CRISIS_STORAGE_FRACTION * total_capacity
+            self.organs[ElementType.WOOD] < EARTH_CRISIS_WOOD_THRESHOLD
+            and total_storage < EARTH_CRISIS_STORAGE_FRACTION * total_capacity
         )
         if crisis:
-            self.organs[ElementType.WOOD] = max(
-                0.0, self.organs[ElementType.WOOD] - WOOD_CRISIS_DRAIN
+            self.organs[ElementType.EARTH] = max(
+                0.0, self.organs[ElementType.EARTH] - EARTH_CRISIS_DRAIN
             )
 
     # --- External callbacks ---
@@ -496,16 +497,16 @@ class TaobotSimple:
     # --- External callbacks ---
 
     def record_damage(self, amount: float) -> None:
-        """Apply incoming damage, routed through Metal armor before reaching Wood.
+        """Apply incoming damage, routed through Metal armor before reaching Earth.
 
         Metal organ acts as a fractional damage absorber: at full Metal integrity
-        no damage reaches Wood; at zero Metal the full amount hits Wood directly.
+        no damage reaches Earth; at zero Metal the full amount hits Earth directly.
         Damage totals are always tracked at face value for logging."""
         self.damage_taken_total += amount
         self._interval_damage += amount
         metal_frac = self.organs[ElementType.METAL] / ORGAN_MAX
-        wood_damage = amount * (1.0 - metal_frac)
-        self.organs[ElementType.WOOD] = max(0.0, self.organs[ElementType.WOOD] - wood_damage)
+        earth_damage = amount * (1.0 - metal_frac)
+        self.organs[ElementType.EARTH] = max(0.0, self.organs[ElementType.EARTH] - earth_damage)
 
     def reset_interval(self) -> None:
         """Zero the interval accumulators. Called by RunLogger every FOCAL_INTERVAL ticks."""

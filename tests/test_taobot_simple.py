@@ -4,10 +4,13 @@ from common import ElementType
 from taobot_simple import (
     CYCLE_EFFICIENCY,
     CYCLE_RATE,
+    EARTH_CRISIS_DRAIN,
+    EARTH_CRISIS_STORAGE_FRACTION,
     FIRE_LOCKOUT_THRESHOLD,
     ORGAN_DEGRADE_RATE,
     ORGAN_MAX,
     ORGAN_REGEN_RATE,
+    ORGAN_STORAGE_DRAIN,
     REGEN_STORAGE_THRESHOLD,
     TaobotSimple,
 )
@@ -47,11 +50,20 @@ def test_taobot_fitness_score():
     assert t.fitness_score == pytest.approx(0.1)
 
 
-def test_taobot_flee_triggered_at_low_wood(world, taobot):
-    taobot.organs[ElementType.WOOD] = taobot.flee_wood_threshold * 0.5
+def test_taobot_flee_triggered_at_low_earth(world, taobot):
+    taobot.organs[ElementType.EARTH] = taobot.flee_earth_threshold * 0.5
     resources, hazards = taobot._sense(world)
     taobot._decide(resources, hazards, world)
     assert taobot.behavior_state == "fleeing"
+
+
+def test_taobot_low_wood_does_not_trigger_flee(world, taobot):
+    """The flee trigger reads Earth, not Wood. A collapsed transport network is
+    not a structural emergency, so it must not put the bot into "fleeing"."""
+    taobot.organs[ElementType.WOOD] = 0.0
+    taobot.organs[ElementType.EARTH] = ORGAN_MAX
+    taobot._decide([], [], world)  # no hazards, so fleeing could only come from the organ test
+    assert taobot.behavior_state != "fleeing"
 
 
 def test_taobot_searches_when_nothing_visible(world):
@@ -116,30 +128,82 @@ def test_taobot_water_drain_zero_when_immobile(taobot):
     assert taobot.storage[ElementType.WATER] == pytest.approx(storage_before)
 
 
-def test_taobot_earth_multiplier_increases_drain(taobot):
-    taobot.organs[ElementType.EARTH] = 0.0  # worst-case: double drain
-    taobot.storage[ElementType.FIRE] = 10.0
-    taobot.storage[ElementType.EARTH] = 10.0
-    taobot.storage[ElementType.WATER] = 10.0
+def test_taobot_wood_multiplier_increases_drain(taobot):
+    """Wood at 0 saturates the multiplier at 2.0, and each organ pays its own rate.
+
+    The Earth/Wood rates are asserted here because Story 1.0a moved them with the
+    roles: structural upkeep (now Earth) stays cheap, metabolic upkeep (now Wood)
+    stays dear. Swapping them back must fail this test."""
+    taobot.organs[ElementType.WOOD] = 0.0  # worst-case: double drain
+    for e in (ElementType.FIRE, ElementType.EARTH, ElementType.WOOD, ElementType.WATER):
+        taobot.storage[e] = 10.0  # well above the regen floor, so every drain is paid
+    mult = 2.0  # 1.0 + (ORGAN_MAX - 0) / ORGAN_MAX
     fire_before = taobot.storage[ElementType.FIRE]
+    earth_before = taobot.storage[ElementType.EARTH]
+    wood_before = taobot.storage[ElementType.WOOD]
+
     taobot._metabolize()
-    # Earth=0 → earth_mult=2.0; Fire drain should be 0.015 * 2 = 0.030
-    assert taobot.storage[ElementType.FIRE] == pytest.approx(fire_before - 0.030, abs=1e-6)
+
+    assert taobot.storage[ElementType.FIRE] == pytest.approx(
+        fire_before - ORGAN_STORAGE_DRAIN["FIRE"] * mult, abs=1e-6
+    )
+    # Structure is cheap to maintain; the transport network is not.
+    assert taobot.storage[ElementType.EARTH] == pytest.approx(
+        earth_before - ORGAN_STORAGE_DRAIN["EARTH"] * mult, abs=1e-6
+    )
+    assert taobot.storage[ElementType.WOOD] == pytest.approx(
+        wood_before - ORGAN_STORAGE_DRAIN["WOOD"] * mult, abs=1e-6
+    )
+    assert ORGAN_STORAGE_DRAIN["EARTH"] < ORGAN_STORAGE_DRAIN["WOOD"]
+
+
+def test_taobot_zero_wood_does_not_kill_and_crisis_drains_earth(world, taobot):
+    """AD-6: Earth is the only death condition.
+
+    A collapsed Wood organ saturates the drain multiplier and opens the crisis,
+    which bleeds the *Earth* organ — but Wood at zero never removes the bot."""
+    taobot.organs[ElementType.WOOD] = 0.0
+    taobot.organs[ElementType.EARTH] = ORGAN_MAX
+    for e in ElementType:
+        taobot.storage[e] = 0.0
+
+    # Fund Earth's own upkeep so the only Earth organ loss is the crisis drain.
+    # Stay below the regen floor (no regen masking the drain) and below the crisis
+    # ceiling (so the crisis actually fires) — both derived, so retuning either
+    # constant fails here loudly instead of quietly invalidating the test.
+    regen_floor = REGEN_STORAGE_THRESHOLD * taobot.storage_capacity[ElementType.EARTH]
+    crisis_ceiling = EARTH_CRISIS_STORAGE_FRACTION * sum(taobot.storage_capacity.values())
+    taobot.storage[ElementType.EARTH] = min(regen_floor, crisis_ceiling) / 2.0
+    assert taobot.storage[ElementType.EARTH] > ORGAN_STORAGE_DRAIN["EARTH"] * 2.0, (
+        "Earth upkeep must be affordable, or starvation degrade masks the crisis drain"
+    )
+    assert taobot.entity_id in world._taobots  # precondition: the bot is alive to begin with
+
+    taobot._metabolize()
+
+    assert taobot.organs[ElementType.EARTH] == pytest.approx(ORGAN_MAX - EARTH_CRISIS_DRAIN)
+    assert taobot.organs[ElementType.WOOD] == pytest.approx(0.0)
+
+    world._check_taobot_deaths()
+    assert taobot.entity_id in world._taobots
 
 
 def test_taobot_record_damage_routes_through_metal(taobot):
-    taobot.organs[ElementType.METAL] = ORGAN_MAX  # full armor — nothing reaches Wood
-    wood_before = taobot.organs[ElementType.WOOD]
+    taobot.organs[ElementType.METAL] = ORGAN_MAX  # full armor — nothing reaches Earth
+    earth_before = taobot.organs[ElementType.EARTH]
     taobot.record_damage(10.0)
-    assert taobot.organs[ElementType.WOOD] == pytest.approx(wood_before)
+    assert taobot.organs[ElementType.EARTH] == pytest.approx(earth_before)
     assert taobot.damage_taken_total == pytest.approx(10.0)
 
 
 def test_taobot_record_damage_no_metal(taobot):
-    taobot.organs[ElementType.METAL] = 0.0  # no armor — full damage to Wood
+    taobot.organs[ElementType.METAL] = 0.0  # no armor — full damage to Earth
+    earth_before = taobot.organs[ElementType.EARTH]
     wood_before = taobot.organs[ElementType.WOOD]
     taobot.record_damage(5.0)
-    assert taobot.organs[ElementType.WOOD] == pytest.approx(wood_before - 5.0)
+    assert taobot.organs[ElementType.EARTH] == pytest.approx(earth_before - 5.0)
+    # AD-7: damage targets the body only — the transport network is untouched
+    assert taobot.organs[ElementType.WOOD] == pytest.approx(wood_before)
     assert taobot.damage_taken_total == pytest.approx(5.0)
     assert taobot._interval_damage == pytest.approx(5.0)
 
@@ -224,3 +288,13 @@ def test_taobot_specialist_archetype():
     for e, a in t.affinity.items():
         if e != ElementType.FIRE:
             assert fire_aff > a
+
+
+def test_taobot_survivor_archetype_flee_threshold():
+    """`_merge_params` accepts unknown keys, so a stale `flee_wood_threshold` in the
+    archetype would silently fall back to the default and cost the survivor its
+    defining trait. Pin the key by pinning the value it produces."""
+    from taobot_simple import ARCHETYPES
+    t = TaobotSimple(x=0.0, y=0.0, entity_id=1, params=ARCHETYPES["survivor"])
+    assert t.flee_earth_threshold == pytest.approx(50.0)
+    assert t.flee_earth_threshold > TaobotSimple(x=0.0, y=0.0, entity_id=2).flee_earth_threshold

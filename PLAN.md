@@ -200,27 +200,59 @@ separate buffer. This decision gates the meridian subsystem and Phase 4's gene e
 
 | Organ | Governs | Failure behavior |
 |---|---|---|
-| Wood | Body structure | Death condition at 0; damaged by Metal attacks; drives flee threshold |
+| Earth | Body structure | Death condition at 0; damaged by Metal attacks; drives flee threshold |
 | Fire | Nervous system | Scales sensing range; below 20 → locked to searching (random walk only) |
 | Water | Locomotion | Governs speed; at 0 → immobile; drain scales with speed fraction |
-| Earth | Metabolism / meridians | Drain multiplier rises as it degrades; collapse triggers Wood crisis |
-| Metal | Armor | Absorbs incoming damage before Wood takes it |
+| Wood | Meridians / transport | Drain multiplier rises as it degrades; collapse triggers Earth crisis |
+| Metal | Armor | Absorbs incoming damage before Earth takes it |
 
-> **⚠ This table describes current code, and current code is wrong. Do not build from it.**
-> The architect pass of 2026-08-10 found that the **Wood and Earth roles are swapped** relative to
-> every other source — `docs/domain-spec.md`'s element-to-part map, `MER-1` (meridians consume
-> Wood), `STR-1`/`STR-2` (the body is Earth), and this file's own epic table (E3 Meridians = Wood).
-> The correct mapping is **Earth = body/structure** (death condition, damage target, flee trigger)
-> and **Wood = meridians/transport** (metabolic multiplier, collapse trigger).
+**Provenance of the Earth/Wood mapping.** The code shipped these two roles inverted until E1 Story
+1.0a corrected them; the inversion was found by the architect pass of 2026-08-10. The mapping above
+is corroborated by `docs/domain-spec.md`'s element-to-part map, `MER-1` (meridians consume Wood) and
+`STR-1`/`STR-2` (the body is Earth), and by this file's own epic table (E3 Meridians = Wood). **Any
+artifact that maps Wood to body structure predates 1.0a and is wrong** — this table is authoritative.
+
+> **⚠ The Water row above is wrong. Do not build on it.** The other four rows are correct.
+> **Nothing writes `organs[WATER]`.** `_metabolize` drains Fire, Earth, Wood and Metal only
+> (`taobot_simple.py:441-461`); `ORGAN_STORAGE_DRAIN["WATER"]` is dead. The Water organ has logged
+> a constant 100.0 in every run to date — it went vestigial when `LegPart` took over locomotion
+> cost. `world.get_stats()` also omits Metal entirely.
 >
-> The table is also wrong about Water: **nothing writes `organs[WATER]`**. `_metabolize` drains
-> Fire, Earth, Wood and Metal only (`taobot_simple.py:441-461`); `ORGAN_STORAGE_DRAIN["WATER"]` is
-> dead. The Water organ has logged a constant 100.0 in every run to date — it went vestigial when
-> `LegPart` took over locomotion cost. `world.get_stats()` also omits Metal entirely.
->
-> E1 **Stories 1.0a and 1.0b** correct all three — 1.0a the swapped roles, 1.0b the dead Water organ
-> and the missing Metal column. This table is rewritten when they land, not before —
-> per the rule above, the plan describes what exists.
+> E1 **Story 1.0b** corrects both — the dead Water organ and the missing Metal column. The Water
+> row is rewritten when it lands, not before — per the rule above, the plan describes what exists.
+
+**Log discontinuity at Story 1.0a.** The organ CSV columns are element-keyed (`organ_WOOD`,
+`mean_organ_earth`, …) and keep their names across the swap, so runs logged before and after 1.0a
+are **not comparable**: the structural/death line moves from `*_WOOD` to `*_EARTH` and the metabolic
+line moves the other way. Renaming the columns was rejected as out of scope; see
+`_bmad-output/implementation-artifacts/deferred-work.md`.
+
+**Balance shift measured at 1.0a — metabolic pressure dropped.** The swap is not balance-neutral,
+because each organ is funded from its own element's storage, and the two pools do not sustain the
+same drain equally. Comparing seeded runs either side of the change
+(`--headless --duration 5 --seed 42`, run-mean across all samples):
+
+| Organ line | Before (role on Wood/Earth) | After | Δ |
+|---|---|---|---|
+| Structural / death | 92.8 | 93.9 | flat |
+| Metabolic (drain multiplier) | 52.3 | 75.6 | **+23** |
+| Fire | 66.3 | 73.2 | +7 |
+
+Population held at 20 with no extinction in both. Fire rises because the global drain multiplier now
+reads the metabolic organ, which sits far healthier than it did.
+
+The discriminating comparison is the metabolic row, where the drain is the expensive `0.010`: funded
+from Earth storage the organ settled at 52.3, funded from Wood storage at 75.6. **Wood storage
+sustains that drain better than Earth storage does.** The structural row does not discriminate —
+at `0.004` both pools hold the organ near its ceiling. A likely mechanism, unproven on one seed, is
+`default_world.json`'s `cluster_affinity` (Earth 0.8 vs Wood 0.5): tighter clustering means a
+wandering bot meets Earth in bunches rather than steadily. Wood and Earth also enter from different
+points in the Sheng cycle (Water→Wood, Fire→Earth), which may contribute.
+
+**Story 1.0c must derive its constants against the post-1.0a world**, not against any pressure
+observed before it. Two cautions when reproducing: quote the same statistic — the run-mean above and
+the final sample differ by 10+ points on the metabolic line — and note that `--duration` is
+wall-clock, so run length varies with machine speed (these runs covered 190 and 185 samples).
 
 Constants in `taobot_simple.py`: `ORGAN_MAX=100`, `ORGAN_DEGRADE_RATE=1.0` (per tick when the
 governing element's storage is empty), `ORGAN_REGEN_RATE=0.2` (when storage is above
@@ -345,9 +377,12 @@ completion: **Q4** (destructive-cycle rate), **Q6** (storage/chi boundary).
 body_parts.py      BUILT     BodyPart base + LegPart only
 body_factory.py    BUILT     BodyFactory: body spec -> list[BodyPart], stable part IDs
 renderer.py        BUILT     Polar body rendering, organ graph
-taobot_simple.py   BUILT     Organ system lives here; renamed to taobot.py in E1 Story 1.0a
+taobot_simple.py   BUILT     Organ system lives here; rename to taobot.py deferred out of 1.0a
 chi.py             MISSING   ChiPool, destructive-cycle chemistry tick
-taobot.py          PENDING   Not a second class — taobot_simple.py becomes it by subtraction
+taobot.py          DEFERRED  Not a second class — taobot_simple.py becomes it by subtraction.
+                             The rename was split out of E1 Story 1.0a at the spec token gate
+                             and has no epic yet; see
+                             _bmad-output/implementation-artifacts/deferred-work.md
 ```
 
 **On the two-class plan.** The original file table imagined `taobot_simple.py` being retired in

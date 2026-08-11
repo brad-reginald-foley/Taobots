@@ -441,7 +441,7 @@ class World:
         """Deal damage to any taobot within 1.0 VU of a hazard.
 
         Damage is routed through record_damage(), which applies Metal armor
-        absorption before any remainder reaches the Wood organ."""
+        absorption before any remainder reaches the Earth organ."""
         for taobot in self._taobots.values():
             nearby_ids = self._entity_hash.neighbors(
                 taobot.x, taobot.y, 1.0, self.config.width, self.config.height
@@ -458,9 +458,9 @@ class World:
                     taobot.record_damage(hazard.damage_per_tick)
 
     def _check_taobot_deaths(self) -> None:
-        """Remove taobots whose Wood organ has reached zero, fire death callback, then refill."""
+        """Remove taobots whose Earth organ has reached zero, fire death callback, then refill."""
         from common import ElementType
-        dead_ids = [eid for eid, t in self._taobots.items() if t.organs[ElementType.WOOD] <= 0.0]
+        dead_ids = [eid for eid, t in self._taobots.items() if t.organs[ElementType.EARTH] <= 0.0]
         for eid in dead_ids:
             if self.on_taobot_death is not None:
                 self.on_taobot_death(self._taobots[eid])
@@ -565,8 +565,11 @@ class World:
         """Return a population-level stats snapshot for CSV logging.
 
         Organ columns report the mean value across all living taobots.
-        Wood organ is the death condition; Fire and Water drive behavioral impairment;
-        Earth drives the metabolic cascade."""
+        Earth organ is the death condition; Fire drives behavioral impairment;
+        Wood drives the metabolic cascade. Nothing writes the Water organ yet — it
+        reports a constant 100.0 until Story 1.0b derives it from the legs.
+        Column names stay element-keyed, so their meaning inverts at Story 1.0a's
+        Wood/Earth swap — see deferred-work.md."""
         taobots = self.taobots
         resource_counts = {e: 0 for e in ELEMENT_LIST}
         for r in self._resources.values():
