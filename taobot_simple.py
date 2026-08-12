@@ -9,6 +9,7 @@ from body_factory import BodyFactory
 from body_parts import BodyPart, LegPart
 from common import ELEMENT_LIST, ElementType
 from math_utils import torus_direction, torus_distance, wrap_position
+from rng import derive_stream, new_seed
 
 if TYPE_CHECKING:
     from world import World
@@ -175,16 +176,31 @@ class TaobotSimple:
         entity_id: int,
         params: dict | None = None,
         archetype: str = "default",
+        rng: random.Random | None = None,
+        run_seed: int | None = None,
     ) -> None:
         """Create a taobot at (x, y) with the given entity_id.
 
         `params` is an optional archetype override dict (see ARCHETYPES).
-        `archetype` is the human-readable name stored for logging."""
+        `archetype` is the human-readable name stored for logging.
+
+        `rng` is this bot's private stream and `run_seed` is the seed of the run it
+        belongs to — `World.spawn_taobot` supplies both. A bot never reaches for
+        module-level `random.*` (`AD-12`): every draw it makes comes out of `self._rng`,
+        so an archetype that starts drawing more numbers perturbs nobody but itself.
+
+        Both default to `None` for bots built directly (tests, sandboxes), in which
+        case a fresh run seed is generated and the stream is derived from it exactly as
+        the world would. That is still a private stream, never a shared global."""
         self.x = x
         self.y = y
         self.entity_id = entity_id
         self.archetype: str = archetype
-        self.heading: float = random.uniform(0, 2 * math.pi)
+        self.run_seed: int = new_seed() if run_seed is None else int(run_seed)
+        self._rng: random.Random = (
+            derive_stream(self.run_seed, "taobot", entity_id) if rng is None else rng
+        )
+        self.heading: float = self._rng.uniform(0, 2 * math.pi)
 
         p = _merge_params(params)
         self.sensing_range: float = p["sensing_range"]
@@ -209,7 +225,9 @@ class TaobotSimple:
 
         # Phase 2 body parts — built before the organ store because derived organs
         # (Water) read their value straight off the parts.
-        self.body_parts: list[BodyPart] = BodyFactory.make_parts(p["body"])
+        self.body_parts: list[BodyPart] = BodyFactory.make_parts(
+            p["body"], run_seed=self.run_seed, owner_id=entity_id
+        )
         self.legs: list[LegPart] = [bp for bp in self.body_parts if isinstance(bp, LegPart)]
 
         # Stored organs — all start at full integrity. Derived organs have no slot
@@ -326,7 +344,7 @@ class TaobotSimple:
                 if dx != 0.0 or dy != 0.0:
                     self._desired_heading = math.atan2(dy, dx)
             else:
-                self._desired_heading += random.uniform(-0.3, 0.3)
+                self._desired_heading += self._rng.uniform(-0.3, 0.3)
             self.target_entity_id = None
             return
 
@@ -349,7 +367,7 @@ class TaobotSimple:
             self.behavior_state = "searching"
             self.target_entity_id = None
             turn = self.random_walk_turn_rate
-            self._desired_heading += random.uniform(-turn, turn)
+            self._desired_heading += self._rng.uniform(-turn, turn)
             self._desired_heading %= 2 * math.pi
             return
 
@@ -386,7 +404,7 @@ class TaobotSimple:
         self.behavior_state = "searching"
         self.target_entity_id = None
         turn = self.random_walk_turn_rate
-        self._desired_heading += random.uniform(-turn, turn)
+        self._desired_heading += self._rng.uniform(-turn, turn)
         self._desired_heading %= 2 * math.pi
 
     # --- Act ---

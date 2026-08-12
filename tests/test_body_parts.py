@@ -86,10 +86,10 @@ def test_replenish_respects_capacity() -> None:
 def test_body_factory_dispatch() -> None:
     specs = [{"type": "leg", "r": 1.5, "theta": 0.0, "phi": 0.0,
               "max_thrust": 1.0, "capacity": 5.0, "drain_max": 0.01}]
-    parts = BodyFactory.make_parts(specs)
+    parts = BodyFactory.make_parts(specs, run_seed=1, owner_id="test-bot")
     assert len(parts) == 1
     assert isinstance(parts[0], LegPart)
-    assert parts[0].part_id  # non-empty UUID string
+    assert parts[0].part_id  # non-empty derived id
     assert parts[0].phi == 0.0
 
 
@@ -97,7 +97,7 @@ def test_body_factory_phi_default() -> None:
     """Specs without phi field default to 0.0."""
     specs = [{"type": "leg", "r": 1.5, "theta": 0.0,
               "max_thrust": 1.0, "capacity": 5.0, "drain_max": 0.01}]
-    parts = BodyFactory.make_parts(specs)
+    parts = BodyFactory.make_parts(specs, run_seed=1, owner_id="test-bot")
     assert isinstance(parts[0], LegPart)
     assert parts[0].phi == 0.0
 

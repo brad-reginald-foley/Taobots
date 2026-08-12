@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
+import platform
 import random
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rng import derive_stream, new_seed
 from world import World, WorldConfig
 
 if TYPE_CHECKING:
@@ -15,6 +20,12 @@ if TYPE_CHECKING:
 
 DEFAULT_CONFIG = "configs/default_world.json"
 WORKSHOP_CONFIG = "configs/workshop.json"
+
+LOG_DIR = Path("logs")
+
+# Bumped when the manifest's key set changes, so a tool reading an old manifest can
+# tell that it is old rather than mis-parsing it.
+MANIFEST_VERSION = 1
 
 
 
@@ -55,14 +66,36 @@ class RunLogger:
         "interval_damage",
     ]
 
-    def __init__(self, world_name: str) -> None:
-        """Open (and overwrite) the death and focal CSV files for this run."""
+    @staticmethod
+    def path_names(world_name: str) -> list[Path]:
+        """The files a `RunLogger` for `world_name` will write.
+
+        The naming convention is spelled here and nowhere else: `main()` needs these
+        paths for the manifest before the run starts, and a manifest that re-spelled
+        the convention itself would drift from the logger without either side noticing."""
+        return [
+            LOG_DIR / f"{world_name}_deaths.csv",
+            LOG_DIR / f"{world_name}_focal.csv",
+        ]
+
+    def __init__(self, world_name: str, rng: random.Random | None = None) -> None:
+        """Open (and overwrite) the death and focal CSV files for this run.
+
+        `rng` is the logger's *observer* stream, used only to pick focal individuals.
+        It must not be the simulation's stream: an observer that draws from the run it
+        is measuring perturbs that run, so attaching a logger would change the outcome
+        (`AD-16` — observers read, never mutate). Omitted, a private stream is derived
+        from a fresh seed; `main()` derives one from the run seed so focal selection
+        replays with the run."""
         from common import ELEMENT_LIST
 
         self._elements = ELEMENT_LIST
-        Path("logs").mkdir(exist_ok=True)
-        death_path = Path("logs") / f"{world_name}_deaths.csv"
-        focal_path = Path("logs") / f"{world_name}_focal.csv"
+        self._rng: random.Random = (
+            derive_stream(new_seed(), "observer", "focal") if rng is None else rng
+        )
+        LOG_DIR.mkdir(exist_ok=True)
+        death_path, focal_path = self.path_names(world_name)
+        self._paths = [death_path, focal_path]
 
         self._death_file = open(death_path, "w", newline="")
         self._focal_file = open(focal_path, "w", newline="")
@@ -73,6 +106,11 @@ class RunLogger:
 
         self._focal_ids: list[int] = []  # entity_ids of currently tracked focal bots
         print(f"Run logs: {death_path}, {focal_path}")
+
+    @property
+    def paths(self) -> list[Path]:
+        """The files this logger is writing (named in the manifest)."""
+        return list(self._paths)
 
     def on_death(self, taobot: "TaobotSimple", tick: int) -> None:
         """Write a death record row and remove the bot from focal tracking if present.
@@ -106,7 +144,7 @@ class RunLogger:
             return
         non_focal = [eid for eid in alive_ids if eid not in self._focal_ids]
         while len(self._focal_ids) < self.N_FOCAL and non_focal:
-            chosen = random.choice(non_focal)
+            chosen = self._rng.choice(non_focal)
             self._focal_ids.append(chosen)
             non_focal.remove(chosen)
 
@@ -160,15 +198,23 @@ class MetricsLogger:
         "resources_fire", "resources_earth",
     ]
 
-    def __init__(self, world_name: str) -> None:
-        """Open a new timestamped CSV file. Does not overwrite previous runs."""
-        Path("logs").mkdir(exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-        self._path = Path("logs") / f"{world_name}_{ts}.csv"
+    def __init__(self, world_name: str, ts: str) -> None:
+        """Open a new timestamped CSV file. Does not overwrite previous runs.
+
+        `ts` is the run's shared timestamp and is required: pairing this CSV with the
+        manifest recording the seed that produced it *is* the traceability guarantee,
+        and a defaulted stamp would silently produce a file belonging to no manifest."""
+        LOG_DIR.mkdir(exist_ok=True)
+        self._path = LOG_DIR / f"{world_name}_{ts}.csv"
         self._file = open(self._path, "w", newline="")
         self._writer = csv.DictWriter(self._file, fieldnames=self.COLUMNS)
         self._writer.writeheader()
         print(f"Logging to {self._path}")
+
+    @property
+    def path(self) -> Path:
+        """Where this run's population CSV is being written (named in the manifest)."""
+        return self._path
 
     def log_tick(self, stats: dict) -> None:
         """Write one row from a world.get_stats() dict."""
@@ -203,7 +249,13 @@ class WorkshopLogger:
         "resources_collected", "distance_moved", "damage_taken_total",
     ]
 
-    def __init__(self, world_name: str, n_legs: int = 0) -> None:
+    @staticmethod
+    def path_name(world_name: str, ts: str) -> Path:
+        """The file a `WorkshopLogger` will write — the convention, spelled once."""
+        return LOG_DIR / f"{world_name}_workshop_{ts}.csv"
+
+    def __init__(self, world_name: str, ts: str, n_legs: int = 0) -> None:
+        """`ts` is the run's shared timestamp — see `MetricsLogger.__init__`."""
         from common import ELEMENT_LIST
         self._elements = ELEMENT_LIST
         self._n_legs = n_legs
@@ -213,13 +265,17 @@ class WorkshopLogger:
             for field in ("reserve", "integrity", "thrust")
         ]
         columns = self._BASE_COLUMNS + leg_cols
-        Path("logs").mkdir(exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-        self._path = Path("logs") / f"{world_name}_workshop_{ts}.csv"
+        LOG_DIR.mkdir(exist_ok=True)
+        self._path = self.path_name(world_name, ts)
         self._file = open(self._path, "w", newline="")
         self._writer = csv.DictWriter(self._file, fieldnames=columns)
         self._writer.writeheader()
         print(f"Workshop log: {self._path}")
+
+    @property
+    def path(self) -> Path:
+        """Where this run's workshop CSV is being written (named in the manifest)."""
+        return self._path
 
     def log_tick(self, taobot: "TaobotSimple", tick: int) -> None:
         row: dict = {
@@ -252,6 +308,157 @@ class WorkshopLogger:
 
 
 # ---------------------------------------------------------------------------
+# Run manifest — what produced these logs
+# ---------------------------------------------------------------------------
+
+def run_timestamp() -> str:
+    """The stamp shared by every file one run writes, manifest included.
+
+    Millisecond resolution, because it is also the *identity* of a run: at second
+    resolution two runs started in the same second write the same filenames, and the
+    second silently overwrites the first's manifest and population CSV."""
+    return datetime.now().strftime("%Y%m%dT%H%M%S_%f")[:-3]
+
+
+def config_fingerprint(config: WorldConfig) -> str:
+    """A hash of the *resolved* configuration — every value the run actually used.
+
+    The config name and path are not enough to replay a run: configs are edited, and
+    laws are merged in from a second file, so the same name can mean different numbers
+    a week later. Recording the resolved values makes a changed config detectable
+    instead of silently producing a different run under the same seed."""
+    resolved = {
+        "name": config.name,
+        "width": config.width,
+        "height": config.height,
+        "resources": {
+            "initial_count": config.resources.initial_count,
+            "respawn_delay_ticks": config.resources.respawn_delay_ticks,
+            "spawn_weights": {e.name: v for e, v in config.resources.spawn_weights.items()},
+            "cluster_affinity": {
+                e.name: v for e, v in config.resources.cluster_affinity.items()
+            },
+        },
+        "hazards": {
+            "initial_count": config.hazards.initial_count,
+            "spawn_weights": {e.name: v for e, v in config.hazards.spawn_weights.items()},
+            "cluster_affinity": {
+                e.name: v for e, v in config.hazards.cluster_affinity.items()
+            },
+        },
+        "taobots": {
+            "initial_count": config.taobots.initial_count,
+            "target_population": config.taobots.target_population,
+        },
+        "chemistry": {"degrade_rate": config.chemistry.degrade_rate},
+    }
+    canonical = json.dumps(resolved, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def git_sha(repo_root: Path | None = None) -> str | None:
+    """Return the current commit SHA, or None if it cannot be determined.
+
+    Returns None rather than raising: a manifest with an unknown commit is still worth
+    having, and a run must never die because the code was unpacked outside a git
+    checkout, or because `git` is not installed. `repo_root` defaults to the directory
+    holding this file, not the working directory, so the SHA describes the code that
+    is running rather than wherever it happened to be launched from."""
+    root = Path(__file__).resolve().parent if repo_root is None else Path(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def git_dirty(repo_root: Path | None = None) -> bool | None:
+    """True if the working tree has uncommitted changes, None if unknown.
+
+    Recorded beside the SHA because a dirty tree means the SHA does *not* identify the
+    code that ran — the manifest should say so rather than imply a clean replay."""
+    root = Path(__file__).resolve().parent if repo_root is None else Path(repo_root)
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return bool(proc.stdout.strip())
+
+
+def write_manifest(
+    *,
+    seed: int,
+    config: WorldConfig,
+    config_path: str,
+    mode: str,
+    ts: str,
+    log_paths: list[Path],
+    log_dir: Path | None = None,
+) -> Path:
+    """Write this run's manifest beside its logs and return the path — `AD-12` part 3.
+
+    Until now `--seed` was accepted and recorded nowhere, so no logged run could be
+    replayed and no CSV could be attributed to the code that produced it. The manifest
+    closes that: seed, config, commit, Python version and timestamp, plus the log files
+    this run writes, all keyed by the same timestamp that names those files.
+
+    Written *before* the run so a crash still leaves an attributable manifest, which is
+    why `ticks` starts null — `finalize_manifest` fills it in on a clean exit."""
+    directory = LOG_DIR if log_dir is None else Path(log_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{config.name}_manifest_{ts}.json"
+    manifest = {
+        "manifest_version": MANIFEST_VERSION,
+        "seed": seed,
+        "config_name": config.name,
+        "config_path": str(config_path),
+        "config_fingerprint": config_fingerprint(config),
+        # Null until the run ends. A run stopped by `--duration` is wall-clock bound,
+        # so the same seed reaches a different tick count on a busier machine; the
+        # replay guarantee is "same trajectory", and this says how far this one got.
+        "ticks": None,
+        "mode": mode,
+        "git_sha": git_sha(),
+        "git_dirty": git_dirty(),
+        "python_version": platform.python_version(),
+        "python_implementation": platform.python_implementation(),
+        # Determinism is scoped to an environment, never to a committed golden file:
+        # float summation order and libm differ across builds, so the platform is part
+        # of what a replay needs to match.
+        "platform": platform.platform(),
+        "timestamp": ts,
+        "logs": [str(p) for p in log_paths],
+    }
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    print(f"Run manifest: {path}  (seed {seed})")
+    return path
+
+
+def finalize_manifest(path: Path, tick_count: int) -> None:
+    """Record how many ticks the run actually reached.
+
+    Best-effort: a manifest that cannot be updated is not worth failing a completed run
+    over, and the pre-run manifest it leaves behind is still attributable."""
+    try:
+        manifest = json.loads(Path(path).read_text())
+        manifest["ticks"] = tick_count
+        Path(path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+        print(f"Warning: could not record final tick count in {path}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -264,7 +471,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="Path to world config JSON")
     parser.add_argument("--duration", type=float, default=0.0,
                         help="Wall-clock seconds to run (headless only; 0 = infinite)")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument("--ticks", type=int, default=0,
+                        help="Stop after N ticks (headless only; 0 = no tick limit). "
+                             "Unlike --duration this is reproducible: the same seed and "
+                             "the same --ticks give the same run on any machine")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed (one is generated and recorded if omitted)")
     return parser.parse_args()
 
 
@@ -272,7 +484,7 @@ def parse_args() -> argparse.Namespace:
 # Visual mode
 # ---------------------------------------------------------------------------
 
-def run_visual(world: World, config: WorldConfig) -> None:
+def run_visual(world: World, config: WorldConfig, run_logger: RunLogger) -> None:
     """Run the pygame visual loop at a user-adjustable target FPS.
 
     Controls:
@@ -295,7 +507,6 @@ def run_visual(world: World, config: WorldConfig) -> None:
     clock = pygame.time.Clock()
     renderer = Renderer(screen)
 
-    run_logger = RunLogger(config.name)
     world.on_taobot_death = lambda t: run_logger.on_death(t, world.tick_count)
 
     selected_id: int | None = None
@@ -364,7 +575,9 @@ def run_visual(world: World, config: WorldConfig) -> None:
 # Workshop mode — Lao Tzu's Workshop
 # ---------------------------------------------------------------------------
 
-def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
+def run_workshop(  # noqa: C901
+    world: World, config: WorldConfig, ws_logger: WorkshopLogger
+) -> None:
     """Single-bot sandbox with tick-by-tick stepping and full state inspector.
 
     Controls:
@@ -395,8 +608,6 @@ def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
     )
 
     selected_id: int | None = next(iter(world._taobots), None)
-    n_legs = len(world._taobots[selected_id].legs) if selected_id is not None else 0
-    ws_logger = WorkshopLogger(config.name, n_legs=n_legs)
     paused = True
     slow_run = False
     target_fps = 3
@@ -472,13 +683,20 @@ def run_workshop(world: World, config: WorldConfig) -> None:  # noqa: C901
 # ---------------------------------------------------------------------------
 
 def run_headless(
-    world: World, config: WorldConfig, duration_secs: float, logger: MetricsLogger
+    world: World,
+    config: WorldConfig,
+    duration_secs: float,
+    logger: MetricsLogger,
+    run_logger: RunLogger,
+    max_ticks: int = 0,
 ) -> None:
     """Run the simulation at maximum speed without a display.
 
     Logs population stats every 60 ticks and prints a progress line every 600.
-    Stops after duration_secs wall-clock seconds, or runs until interrupted if duration=0."""
-    run_logger = RunLogger(config.name)
+    Stops after `max_ticks` ticks or `duration_secs` wall-clock seconds, whichever
+    comes first; both default to 0, meaning "no limit". Prefer `max_ticks` when the run
+    needs to be reproducible — a wall-clock bound reaches a different tick count on a
+    machine under different load, so two same-seed runs share only a common prefix."""
     world.on_taobot_death = lambda t: run_logger.on_death(t, world.tick_count)
 
     start_wall = time.monotonic()
@@ -500,6 +718,8 @@ def run_headless(
                 )
                 logger.flush()
 
+            if max_ticks > 0 and world.tick_count >= max_ticks:
+                break
             if duration_secs > 0 and time.monotonic() - start_wall >= duration_secs:
                 break
     except KeyboardInterrupt:
@@ -514,28 +734,67 @@ def run_headless(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Parse args, build the world, and dispatch to visual or headless mode."""
+    """Parse args, build the world, and dispatch to visual or headless mode.
+
+    Every run is seeded: `--seed` fixes it, and omitting the flag generates one rather
+    than leaving the run unseeded. Either way the seed reaches the manifest, so a run
+    launched without `--seed` is still replayable afterwards (`AD-12` part 3)."""
     args = parse_args()
 
-    if args.seed is not None:
-        random.seed(args.seed)
-        # Phase 3+: also seed numpy when introduced
+    seed = new_seed() if args.seed is None else args.seed
+    ts = run_timestamp()
 
     if args.workshop:
-        config = WorldConfig.from_json(WORKSHOP_CONFIG)
+        config_path = WORKSHOP_CONFIG
     else:
-        config = WorldConfig.from_json(args.config)
+        config_path = args.config
+    config = WorldConfig.from_json(config_path)
 
-    world = World(config)
+    world = World(config, seed=seed)
     world.initialize()
 
+    mode = "workshop" if args.workshop else ("headless" if args.headless else "visual")
+
+    # Loggers are built here, before the run, so the manifest can take its file list
+    # straight off them. Nothing re-spells the naming convention: a manifest that
+    # predicted paths of its own would drift from the loggers silently, and a manifest
+    # naming files that were never written is worse than no manifest.
+    observer = derive_stream(world.seed, "observer", "focal")
     if args.workshop:
-        run_workshop(world, config)
-    elif args.headless:
-        logger = MetricsLogger(config.name)
-        run_headless(world, config, args.duration, logger)
+        # The workshop writes its own single-bot CSV and no run logs.
+        first_bot = next(iter(world.taobots), None)
+        n_legs = len(first_bot.legs) if first_bot is not None else 0
+        ws_logger = WorkshopLogger(config.name, ts=ts, n_legs=n_legs)
+        log_paths = [ws_logger.path]
     else:
-        run_visual(world, config)
+        run_logger = RunLogger(config.name, rng=observer)
+        log_paths = run_logger.paths
+        if args.headless:
+            metrics = MetricsLogger(config.name, ts=ts)
+            log_paths = log_paths + [metrics.path]
+
+    # Written *before* the run: a run killed by Ctrl-C or a crash is exactly the one
+    # whose logs most need attributing to a seed.
+    manifest_path = write_manifest(
+        seed=seed,
+        config=config,
+        config_path=config_path,
+        mode=mode,
+        ts=ts,
+        log_paths=log_paths,
+    )
+
+    try:
+        if args.workshop:
+            run_workshop(world, config, ws_logger)
+        elif args.headless:
+            run_headless(
+                world, config, args.duration, metrics, run_logger, max_ticks=args.ticks
+            )
+        else:
+            run_visual(world, config, run_logger)
+    finally:
+        finalize_manifest(manifest_path, world.tick_count)
 
 
 if __name__ == "__main__":

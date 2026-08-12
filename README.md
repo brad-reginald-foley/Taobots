@@ -28,13 +28,15 @@ leaves `notebooks/` broken.
 **CLI options**
 
 ```
-python main.py [--headless] [--workshop] [--config PATH] [--duration SECS] [--seed INT]
+python main.py [--headless] [--workshop] [--config PATH] [--duration SECS] [--ticks N] [--seed INT]
 
   --headless        Run without display at maximum speed
   --workshop        Open Lao Tzu's Workshop — single-bot sandbox, tick-by-tick
   --config PATH     World config JSON (default: configs/default_world.json)
   --duration SECS   Stop after N wall-clock seconds (headless only; 0 = infinite)
-  --seed INT        Fix random seed for reproducibility
+  --ticks N         Stop after N ticks (headless only; 0 = no limit). Reproducible,
+                    unlike --duration: same seed + same --ticks = same run
+  --seed INT        Fix the run seed (one is generated and recorded if omitted)
 ```
 
 ---
@@ -196,6 +198,38 @@ files are **overwritten** every time a run starts, so copy them out before re-ru
 | `<world>_workshop_<timestamp>.csv` | Full per-tick state of the single workshop bot: organs, storage, per-element intake, damage, position, behavior, per-leg reserve/integrity/thrust | Every tick (`--workshop` only) | accumulates |
 | `<world>_deaths.csv` | Per-bot death record (age, distance, damage, per-element collected) | On each death | **overwritten** |
 | `<world>_focal.csv` | N=5 sampled focal bots: location, state, storage, interval deltas | Every 10 ticks | **overwritten** |
+| `<world>_manifest_<timestamp>.json` | Seed, config name + path + fingerprint, git SHA + dirty flag, Python version, platform, tick count, and the log files this run wrote | Written at start, tick count filled in at exit | accumulates |
+
+### Replaying a run
+
+Every run is seeded, whether or not you pass `--seed`: when the flag is omitted a seed is generated
+and written to the manifest, so any recorded run can be replayed afterwards. The manifest is written
+*before* the run starts, so a run killed with Ctrl-C still leaves one behind. It shares its timestamp
+with the population and workshop CSVs of the same run, which is how a timestamped log is paired with
+the seed that produced it.
+
+```bash
+python main.py --headless --ticks 5000                    # seed generated and recorded
+jq '.seed, .ticks, .config_fingerprint' logs/default_manifest_*.json
+python main.py --headless --ticks 5000 --seed N           # reproduces it exactly
+```
+
+**Use `--ticks`, not `--duration`, when the run needs to be reproducible.** `--duration` is a
+wall-clock bound, so the same seed reaches a different tick count on a busier machine; two such runs
+agree only up to the shorter one's length. `--ticks` is a tick-count bound and gives byte-identical
+logs. The manifest records the tick count actually reached either way.
+
+Three things must match for a replay to reproduce a run, and the manifest records all three so a
+mismatch is visible rather than silent:
+
+- **the seed** — `seed`
+- **the configuration** — `config_fingerprint` hashes the *resolved* config, laws merged in, because
+  a config can be edited between runs while keeping its name and path
+- **the code** — `git_sha`, plus `git_dirty`, which being `true` means the SHA does not identify what
+  actually ran
+
+Determinism is scoped to the same code on the same machine: float summation order and libm differ
+across architectures, so logs from two different machines are not expected to match.
 
 ---
 

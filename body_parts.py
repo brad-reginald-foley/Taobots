@@ -16,7 +16,9 @@ class BodyPart(ABC):
 
     All parts share:
     - A polar position (r, theta) on the body for rendering and future genetic encoding.
-    - A stable part_id (UUID4) assigned at instantiation for genetics compatibility.
+    - A stable part_id assigned at instantiation, derived by `BodyFactory` from the
+      run seed and the gene that expressed it (`AD-9`) — never random, so a seeded
+      run reproduces its part ids exactly.
     - An element type that determines which chi pool the part draws from.
     - A local reserve + capacity buffer, replenished each tick from taobot storage.
     - A structural_integrity float (0–1) that degrades when starved or damaged.

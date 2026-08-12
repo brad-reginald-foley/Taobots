@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Callable
 from common import ELEMENT_LIST, ElementType
 from entities import Hazard, Resource
 from math_utils import torus_distance
+from rng import derive_stream, new_seed
 
 if TYPE_CHECKING:
     from taobot_simple import TaobotSimple
@@ -327,11 +328,22 @@ class World:
       3. _apply_hazard_damage — hazards within 1.0 VU deal damage to nearby taobots
       4. _check_taobot_deaths — remove dead bots, fire on_taobot_death callback, respawn
       5. tick_count += 1
+
+    Randomness (`AD-12`): the world owns exactly one stream, used for spawning and
+    placement, and hands every taobot a *separate* stream derived from
+    `(seed, "taobot", entity_id)`. Nothing here touches module-level `random.*`, so a
+    behaviour change that makes one bot draw more numbers cannot shift anyone else's.
     """
 
-    def __init__(self, config: WorldConfig) -> None:
-        """Create an empty world. Call initialize() to populate it."""
+    def __init__(self, config: WorldConfig, seed: int | None = None) -> None:
+        """Create an empty world. Call initialize() to populate it.
+
+        `seed` fixes every stream this world will ever derive. Omit it and one is
+        generated: a world always has a seed, so `world.seed` is what a run manifest
+        records and what replays the run — there is no unseeded mode to forget about."""
         self.config = config
+        self.seed: int = new_seed() if seed is None else int(seed)
+        self._rng: random.Random = derive_stream(self.seed, "world")
         self.tick_count: int = 0
         self._next_id: int = 0
 
@@ -395,7 +407,7 @@ class World:
         """Draw a random ElementType using the given probability weights."""
         elements = list(weights.keys())
         probs = [weights[e] for e in elements]
-        return random.choices(elements, weights=probs, k=1)[0]
+        return self._rng.choices(elements, weights=probs, k=1)[0]
 
     def _pick_position(
         self,
@@ -410,7 +422,7 @@ class World:
         Falls back to the full candidate set if the world is too crowded for valid spacing."""
         ww, wh = self.config.width, self.config.height
         candidates = [
-            (random.uniform(0, ww), random.uniform(0, wh))
+            (self._rng.uniform(0, ww), self._rng.uniform(0, wh))
             for _ in range(CLUSTER_CANDIDATES)
         ]
 
@@ -427,7 +439,7 @@ class World:
         pool = spaced if spaced else candidates
 
         if affinity == 0.0:
-            return random.choice(pool)
+            return self._rng.choice(pool)
 
         weights = []
         for cx, cy in pool:
@@ -441,7 +453,7 @@ class World:
                 <= CLUSTER_RADIUS
             )
             weights.append(math.exp(affinity * n))
-        return random.choices(pool, weights=weights, k=1)[0]
+        return self._rng.choices(pool, weights=weights, k=1)[0]
 
     def spawn_resource(
         self,
@@ -460,9 +472,9 @@ class World:
             x, y = self._pick_position(element_type, affinity, self._resources)
         else:
             if x is None:
-                x = random.uniform(0, self.config.width)
+                x = self._rng.uniform(0, self.config.width)
             if y is None:
-                y = random.uniform(0, self.config.height)
+                y = self._rng.uniform(0, self.config.height)
 
         eid = self._alloc_id()
         r = Resource(x=x, y=y, element_type=element_type, entity_id=eid)
@@ -485,9 +497,9 @@ class World:
             x, y = self._pick_position(element_type, affinity, self._hazards)
         else:
             if x is None:
-                x = random.uniform(0, self.config.width)
+                x = self._rng.uniform(0, self.config.width)
             if y is None:
-                y = random.uniform(0, self.config.height)
+                y = self._rng.uniform(0, self.config.height)
 
         eid = self._alloc_id()
         h = Hazard(x=x, y=y, element_type=element_type, entity_id=eid)
@@ -505,16 +517,29 @@ class World:
         """Spawn a taobot at (x, y) with optional archetype params dict.
 
         Omit x/y to place randomly. Omit params to use DEFAULT_PARAMS.
-        `archetype` is stored on the taobot for logging/analysis."""
+        `archetype` is stored on the taobot for logging/analysis.
+
+        Placement is drawn from the world stream; the bot is then handed its *own*
+        stream, derived from `(seed, "taobot", entity_id)`. The two are separate on
+        purpose — a bot that starts drawing more numbers changes only its own
+        trajectory, never the placement of anything spawned after it (`AD-12`)."""
         from taobot_simple import TaobotSimple
 
         if x is None:
-            x = random.uniform(0, self.config.width)
+            x = self._rng.uniform(0, self.config.width)
         if y is None:
-            y = random.uniform(0, self.config.height)
+            y = self._rng.uniform(0, self.config.height)
 
         eid = self._alloc_id()
-        t = TaobotSimple(x=x, y=y, entity_id=eid, params=params, archetype=archetype)
+        t = TaobotSimple(
+            x=x,
+            y=y,
+            entity_id=eid,
+            params=params,
+            archetype=archetype,
+            rng=derive_stream(self.seed, "taobot", eid),
+            run_seed=self.seed,
+        )
         self._taobots[eid] = t
         self._taobot_hash.register(eid, x, y)
         return t
@@ -542,10 +567,17 @@ class World:
         """Deal damage to any taobot within 1.0 VU of a hazard.
 
         Damage is routed through record_damage(), which applies Metal armor
-        absorption before any remainder reaches the Earth organ."""
+        absorption before any remainder reaches the Earth organ.
+
+        Hazards are applied in `entity_id` order for the same reason the `query_*`
+        methods sort on it (`AD-12` part 2): `neighbors` returns a set, and each hit
+        accumulates into a float, so an unstable order makes the total order-dependent
+        in its low bits."""
         for taobot in self._taobots.values():
-            nearby_ids = self._entity_hash.neighbors(
-                taobot.x, taobot.y, 1.0, self.config.width, self.config.height
+            nearby_ids = sorted(
+                self._entity_hash.neighbors(
+                    taobot.x, taobot.y, 1.0, self.config.width, self.config.height
+                )
             )
             for eid in nearby_ids:
                 if eid not in self._hazards:
@@ -575,7 +607,11 @@ class World:
     # --- Queries ---
 
     def query_resources(self, x: float, y: float, radius: float) -> list[Resource]:
-        """Return all live resources within radius of (x, y), sorted nearest-first."""
+        """Return all live resources within radius of (x, y), sorted nearest-first.
+
+        Ties break on `entity_id` (`AD-12`): `SpatialHash.neighbors` returns a *set*,
+        so distance alone leaves equidistant entities ordered by set iteration. Callers
+        read `[0]` as "the nearest one", which would then be a coin flip."""
         ww, wh = self.config.width, self.config.height
         candidate_ids = self._entity_hash.neighbors(x, y, radius, ww, wh)
         result = []
@@ -586,11 +622,13 @@ class World:
             dist = torus_distance(x, y, r.x, r.y, self.config.width, self.config.height)
             if dist <= radius:
                 result.append((dist, r))
-        result.sort(key=lambda t: t[0])
+        result.sort(key=lambda t: (t[0], t[1].entity_id))
         return [r for _, r in result]
 
     def query_hazards(self, x: float, y: float, radius: float) -> list[Hazard]:
-        """Return all hazards within radius of (x, y), sorted nearest-first."""
+        """Return all hazards within radius of (x, y), sorted nearest-first.
+
+        Ties break on `entity_id` — see `query_resources`."""
         ww, wh = self.config.width, self.config.height
         candidate_ids = self._entity_hash.neighbors(x, y, radius, ww, wh)
         result = []
@@ -601,7 +639,7 @@ class World:
             dist = torus_distance(x, y, h.x, h.y, self.config.width, self.config.height)
             if dist <= radius:
                 result.append((dist, h))
-        result.sort(key=lambda t: t[0])
+        result.sort(key=lambda t: (t[0], t[1].entity_id))
         return [h for _, h in result]
 
     def query_taobots(
@@ -609,7 +647,8 @@ class World:
     ) -> list["TaobotSimple"]:
         """Return all taobots within radius of (x, y), sorted nearest-first.
 
-        Pass exclude_id to omit the querying taobot itself from the results."""
+        Pass exclude_id to omit the querying taobot itself from the results.
+        Ties break on `entity_id` — see `query_resources`."""
         ww, wh = self.config.width, self.config.height
         candidate_ids = self._taobot_hash.neighbors(x, y, radius, ww, wh)
         result = []
@@ -622,7 +661,7 @@ class World:
             dist = torus_distance(x, y, t.x, t.y, self.config.width, self.config.height)
             if dist <= radius:
                 result.append((dist, t))
-        result.sort(key=lambda t: t[0])
+        result.sort(key=lambda t: (t[0], t[1].entity_id))
         return [t for _, t in result]
 
     def collect_resource(

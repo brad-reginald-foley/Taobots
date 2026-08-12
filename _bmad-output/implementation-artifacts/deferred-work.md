@@ -91,3 +91,25 @@ Append-only. Each entry names work that was split out of a spec, and why.
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-0c-align-the-workshop-with-the-world-it-calibrates.md`
   summary: `tests/test_world.py` now mixes `SpatialHash`, `World` and roughly 250 lines of config/laws-resolution tests; config loading deserves its own file.
   evidence: A `tests/test_config.py` would also be the natural home for fixing `tests/conftest.py`'s CWD-relative `WorldConfig.from_json("configs/default_world.json")` — currently a known CWD bug sitting in the same suite that now exists to prove CWD independence. Story 1.0d owns the conftest fix and could do the split at the same time.
+
+<!-- Below: surfaced by the Story 1.0d code review (2026-08-11). -->
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0d-reproducibility-and-invariant-harness.md`
+  summary: World-level draws all share one stream, so changing a config's resource count still shifts every bot's placement — per-entity isolation was achieved, per-subsystem isolation was not.
+  evidence: Resource spawning, hazard spawning and taobot placement all draw from `derive_stream(seed, "world")`. `AD-12`'s stated failure mode is "one agent taking an extra draw shifts every subsequent agent's numbers"; the same reasoning applies one level up, where an environment tweak perturbs everything downstream of it and silently invalidates comparison against earlier recorded runs. Splitting into `("world","resource")`, `("world","hazard")` and `("world","placement")` would make config tweaks non-destructive. Not urgent — recorded runs are replayable as long as the config is unchanged, which the manifest now records.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0d-reproducibility-and-invariant-harness.md`
+  summary: `derive_token` and `derive_seed` are two views on the same digest with no domain separation, so a publicly logged part id is the top bits of a stream seed whenever their component tuples coincide.
+  evidence: Both call `_digest(world_seed, parts)` and differ only in how they read the bytes. No collision exists today because callers use distinct labels (`"part"` vs `"taobot"`), and the shared mixing is deliberate — the module docstring argues ids and streams should never drift apart. A domain byte in `_digest` would preserve that intent while removing the coupling. Harmless now; matters if part ids ever become externally meaningful (gene-bank export, Phase 4).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0d-reproducibility-and-invariant-harness.md`
+  summary: The essence invariant's negative control reimplements `_cycle_elements` by hand, and will silently drift from the real algorithm when Story 1.2 adds its second conversion path.
+  evidence: `inverted_cycle_elements` is a hand-copied variant kept in sync only by a digest-equality test, which itself breaks the moment a second Metal→Water path exists. The harness docstring claims the essence check survives 1.2; the *control* will not. Deriving the control by wrapping the real method instead of reimplementing it would make it immune. **Story 1.2 must re-verify the negative control still fails, not assume it.**
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0d-reproducibility-and-invariant-harness.md`
+  summary: Part ids are no longer globally unique — two worlds run at the same seed now mint identical part ids, where `uuid4()` guaranteed uniqueness across every run and process.
+  evidence: A deliberate and correct trade: `AD-9` requires derivation from `(run seed, gene id, expression index)` precisely because `uuid4()` is unreachable by any seed. Uniqueness now holds *within* a run, which is all the simulation needs. It stops being sufficient at the persistence boundary — a gene bank storing parts from many runs (Phase 4) needs a run identity in the key, or a uniqueness check on import.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-0d-reproducibility-and-invariant-harness.md`
+  summary: Suite runtime went 2.6s → 11s, roughly half of it a test that re-runs the entire suite in a child process.
+  evidence: `test_the_full_suite_passes_from_a_foreign_working_directory` spawns a full `pytest tests/` from a temp directory, re-running four 3000-tick scenarios (each internally run twice for the determinism check) plus a `main.py` subprocess test. The child inherits none of the parent's options (coverage, `-x`, markers) and its output is truncated to 4000 chars, so a child-only failure is hard to read. Scoping the child to a handful of path-sensitive tests via `-k` would keep the guarantee at a fraction of the cost. Related: run timestamps are second-resolution, so two runs started in the same second overwrite each other's manifest and population CSV despite those being documented as accumulating.

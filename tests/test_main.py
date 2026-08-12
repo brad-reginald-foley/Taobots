@@ -14,6 +14,10 @@ from common import ElementType
 from main import RunLogger, WorkshopLogger
 from world import World
 
+# The timestamped loggers require the run stamp that pairs their CSV with a manifest —
+# there is no default, so tests supply one explicitly.
+TS = "20260811T120000_000"
+
 
 @pytest.fixture
 def one_bot_world(default_config):
@@ -39,7 +43,7 @@ def test_workshop_logger_writes_derived_water_organ(one_bot_world, monkeypatch, 
     world, bot = one_bot_world
     monkeypatch.chdir(tmp_path)
 
-    logger = WorkshopLogger("t", n_legs=len(bot.legs))
+    logger = WorkshopLogger("t", ts=TS, n_legs=len(bot.legs))
     logger.log_tick(bot, tick=1)
     logger.close()
 
@@ -77,7 +81,7 @@ def test_loggers_emit_a_column_for_every_organ(one_bot_world, monkeypatch, tmp_p
 
     expected = {f"organ_{e.name}" for e in ElementType}
 
-    ws = WorkshopLogger("t", n_legs=len(bot.legs))
+    ws = WorkshopLogger("t", ts=TS, n_legs=len(bot.legs))
     ws.log_tick(bot, tick=1)
     ws.close()
     assert expected <= set(_read_rows(ws._path)[0])
