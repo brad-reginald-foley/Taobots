@@ -345,6 +345,40 @@ the ticks where the new organ acts, confirm each value moves the direction and m
 and only then trust an aggregate run. Any organ added to the model must also be added to the
 workshop inspector and to `WorkshopLogger` — an organ that cannot be watched cannot be accepted.
 
+### Finding: hazards are not a meaningful pressure at current tuning (E1 Story 1.1)
+
+*Spike, 2026-08-12. Measured at hazard density **0.0042/u²** in `default_world` (20 hazards over
+4800 u²) and **0.0040/u²** in the workshop (3 over 750 u²), post-1.0c alignment. Re-read this
+finding against those numbers if either config changes. Evidence:
+`logs/workshop_workshop_20260812T221556_195.csv`.*
+
+**A fed bot is immune to hazards.** Held stationary inside a hazard for 220 consecutive ticks with
+storage kept full, a bot took 220.0 face-value damage and **0.00 of it reached the body**. Metal
+finished at 100.00, Earth at 100.00. `record_damage` routes damage as
+`earth_damage = amount × (1 − metal_frac)`, so at full Metal the term is exactly zero — and nothing
+degrades Metal from *absorbing* damage. Metal falls only when Metal **storage** runs empty, via
+ordinary organ starvation. Hazards therefore hurt only a bot that is already starving of Metal, and
+by then starvation is the thing killing it.
+
+**Across a population the pressure is negligible.** Over 6000 ticks of `default_world`: 302 hazard
+contact ticks, 302.0 face-value damage dealt, **22.48 actually reaching the body — 7.4% got
+through**. The Metal organ at contact had a median of 100.0, with **75% of all contacts landing at
+Metal above 99**. For scale, a bot with empty Earth storage loses 1.0 Earth *per tick*, so the
+entire hazard contribution across 20 bots and 6000 ticks is worth about 22 ticks of one bot
+starving.
+
+**The death counts overstate it.** 50% of deaths in that run had taken some hazard damage, which
+invites the reading that hazards kill. They do not: `damage_taken_total` records damage at **face
+value, before absorption**, so a bot can log a large damage total having lost nothing. The
+correlation is incidental — bots wander into hazards, and separately starve.
+
+**Decision: hazards are not a meaningful pressure at current tuning, and structural repair should
+not be designed around them.** Story 1.3 verifies repair against *starvation* damage, which is real
+and easy to force in the workshop. The root cause — armor that absorbs indefinitely without wearing
+— is a known gap already scheduled for **E2 (Armor)**; this finding confirms the mechanism rather
+than opening a new question. Element-targeted hazard damage remains deferred for the same reason:
+`damage_element_type` is dead code, so every hazard currently routes through the same Metal gate.
+
 ### Taobot model variants
 
 A standing deliverable across the organ epics: a set of hand-crafted taobot models to run and
