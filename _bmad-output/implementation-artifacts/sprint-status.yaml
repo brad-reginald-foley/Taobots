@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-11-2026 11:36
-last_updated: 08-12-2026 22:20
+last_updated: 08-12-2026 23:40
 project: taobots
 project_key: NOKEY
 tracking_system: file-system
@@ -42,7 +42,7 @@ development_status:
   1-0d-reproducibility-and-invariant-harness: review
   1-0e-make-the-workshop-inspector-legible: review
   1-1-investigate-the-current-damage-model: review
-  1-2-water-deficit-triggers-metal-to-water-conversion: backlog
+  1-2-water-deficit-triggers-metal-to-water-conversion: review
   1-3-earth-consuming-structural-repair-legs-first: backlog
   1-4-verify-the-leg-integrity-round-trip-in-workshop: backlog
   epic-1-retrospective: optional

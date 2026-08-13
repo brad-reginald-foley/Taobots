@@ -161,13 +161,20 @@ during Phase 2 and is not in the original notes; see `body_parts.py`.
 | CHI-4 | Elements co-present in the chi degrade each other along the **destructive** cycle | post-E3 | **Deferred by design** — `degrade_rate` is a law in `configs/laws.json`, parsed but deliberately unused; insertion point marked in `World.tick` |
 | CHI-5 | The same chemistry applies inside meridians — Wood chi injected into a Fire meridian feeds it; Water chi dampens it | post-E3 | Deferred with CHI-4 |
 | CHI-6 | The destructive-cycle degradation rate | post-E3 | **Open** — see Q4 |
-| CHI-7 | Organs push chi through a system of conversion and use — conversion serves organ demand rather than running as an isolated process | 2 | Partial — passive conversion built; demand-driven gating open, see Q7 |
+| CHI-7 | Organs push chi through a system of conversion and use — conversion serves organ demand rather than running as an isolated process | 2 | Partial — passive conversion built, plus the first demand-driven path (Water deficit → Metal-to-Water); the general case of any organ signalling demand is open, see Q7 |
 
 **Implementation note.** The **generative** (Sheng) cycle is built: each element converts
 `CYCLE_RATE=0.001` of its storage into the next productive-cycle element per tick at
 `CYCLE_EFFICIENCY=0.8`, unconditionally. **Only the constructive path is modelled for now, by
 design** — the destructive cycle is deferred until the organ epics complete, so that behavior can
 be attributed to a single system at a time. See `PLAN.md` Phase 2 for the epic sequence.
+
+Conversion is a capability of the chi tier, not of the organism: it lives on `ChiPool.convert` in
+`chi.py`, which is the **single conversion site** every path runs through, from one pre-tick
+snapshot. The first demand-driven path landed with Story 1.2 — below `chi.water_deficit_threshold`
+of Water capacity, Metal converts to Water at an elevated rate until Water is back at the threshold.
+It requests the shortfall rather than converting at a fixed elevated rate, so it regulates rather
+than pulsing. Both paths move Metal into Water, so each transfer records which path produced it.
 
 ## 8. Spawning and genetics (`GEN-*`)
 

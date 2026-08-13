@@ -24,15 +24,16 @@ from pathlib import Path
 import pytest
 
 from body_parts import LegPart
-from common import ELEMENT_LIST, ElementType
-from taobot_simple import (
+from chi import (
     CYCLE_EFFICIENCY,
     CYCLE_RATE,
     CYCLE_SEQUENCE,
-    DERIVED_ORGANS,
-    ORGAN_MAX,
-    TaobotSimple,
+    ChiPool,
+    ConversionPath,
+    Transfer,
 )
+from common import ELEMENT_LIST, ElementType
+from taobot_simple import DERIVED_ORGANS, ORGAN_MAX, TaobotSimple
 
 # `tests/` carries an `__init__.py`, so the harness is a submodule of the `tests`
 # package rather than a top-level module — import it as one, or it resolves only when
@@ -131,29 +132,68 @@ def test_the_essence_check_never_sees_eating_or_metabolism():
 # The negative control — proving the essence invariant has teeth
 # ---------------------------------------------------------------------------
 
-def inverted_cycle_elements(self) -> None:
-    """`_cycle_elements` with `spent` derived **before** capping — the bug.
+def inverted_convert(self) -> None:
+    """`ChiPool.convert` with `spent` derived **before** capping — the bug.
 
-    The only change from the real implementation is the order of two lines. Correct
-    code caps `produced` against the target's room and then derives what the source
-    pays; this charges the source the full pre-cap amount and lets the target receive
-    whatever fits. Essence is destroyed: the source pays for chi that never arrives.
+    A hand-copy of the real algorithm whose only change is the order of two lines, in
+    *both* paths. Correct code caps `produced` against the target's room and then
+    derives what the source pays; this charges the source the full pre-cap amount and
+    lets the target receive whatever fits. Essence is destroyed: the source pays for
+    chi that never arrives.
 
-    This is a deliberate, permanent negative control, not scaffolding. Story 1.2 adds a
-    second Metal->Water conversion path, and the essence invariant is the net that
-    catches it double-converting — a net nobody has watched fail is an assumption."""
-    transfers: list[tuple[ElementType, ElementType, float, float]] = []
+    **Re-derived for Story 1.2.** The previous version copied `_cycle_elements`, which
+    no longer exists — conversion moved to the chi tier and grew a second, demand-
+    triggered Metal->Water path. That drift was logged as a known consequence of this
+    story, and the control was re-derived against the new implementation rather than
+    relaxed. `test_the_negative_control_still_mirrors_the_real_algorithm` below is what
+    keeps it honest next time.
+
+    This is a deliberate, permanent negative control, not scaffolding: the essence
+    invariant is the net that catches the two paths double-converting, and a net nobody
+    has watched fail is an assumption."""
+    snapshot = {e: self.storage[e] for e in ELEMENT_LIST}
+    committed_in = dict.fromkeys(ELEMENT_LIST, 0.0)
+    committed_out = dict.fromkeys(ELEMENT_LIST, 0.0)
+    transfers: list[tuple[ConversionPath, ElementType, ElementType, float, float]] = []
+
+    def commit(path, source, target, spent, produced):
+        committed_out[source] += spent
+        committed_in[target] += produced
+        transfers.append((path, source, target, spent, produced))
+
     for source, target in CYCLE_SEQUENCE:
-        amount_out = CYCLE_RATE * self.storage[source]
+        amount_out = CYCLE_RATE * snapshot[source]
         spent = amount_out  # <-- derived before the cap; the real code derives it after
-        room = self.storage_capacity[target] - self.storage[target]
+        room = self.capacity[target] - snapshot[target]
         produced = min(amount_out * CYCLE_EFFICIENCY, room)
         if produced <= 0.0:
             continue
-        transfers.append((source, target, spent, produced))
-    for source, target, spent, produced in transfers:
-        self.storage[source] = max(0.0, self.storage[source] - spent)
-        self.storage[target] += produced
+        commit(ConversionPath.PASSIVE, source, target, spent, produced)
+
+    water = ElementType.WATER
+    metal = ElementType.METAL
+    projected_water = snapshot[water] + committed_in[water] - committed_out[water]
+    trigger_level = self.deficit_level()
+    self.deficit_active = projected_water < trigger_level
+    if self.deficit_active:
+        projected_metal = snapshot[metal] + committed_in[metal] - committed_out[metal]
+        demand = trigger_level - projected_water
+        amount_out = min(
+            self.laws.deficit_conversion_rate * snapshot[metal], projected_metal
+        )
+        spent = amount_out  # <-- the same inversion, on the demand path
+        room = self.capacity[water] - projected_water
+        produced = min(amount_out * CYCLE_EFFICIENCY, demand, room)
+        if produced > 0.0:
+            commit(ConversionPath.DEFICIT, metal, water, spent, produced)
+
+    # Applied and recorded the same way the real one does, so the control mirrors
+    # attribution too and not only storage. (Wiping `last_transfers` here would let the
+    # per-path record drift arbitrarily while the mirror test below still passed.)
+    self.last_transfers = tuple(
+        self.apply(Transfer(path, source, target, spent, produced))
+        for path, source, target, spent, produced in transfers
+    )
 
 
 # The inversion is only *observable* where a target is partially capped. Uncapped,
@@ -162,10 +202,14 @@ def inverted_cycle_elements(self) -> None:
 # `brimming` is the scenario that puts every transfer under a cap.
 _CAPPED_SCENARIO = next(s for s in SCENARIOS if s.name == "brimming")
 
+# The demand path's own inversion needs a scenario where that path is capped by
+# `demand` rather than by the Metal available — which is exactly the deficit regime.
+_DEFICIT_SCENARIO = next(s for s in SCENARIOS if s.name == "water deficit")
+
 
 def test_inverted_cycle_makes_the_essence_assertion_fail(monkeypatch):
     """Acceptance: with `spent` computed before capping, the harness fails."""
-    monkeypatch.setattr(TaobotSimple, "_cycle_elements", inverted_cycle_elements)
+    monkeypatch.setattr(ChiPool, "convert", inverted_convert)
 
     with pytest.raises(AssertionError) as excinfo:
         assert_invariants(replace(_CAPPED_SCENARIO, ticks=50))
@@ -183,7 +227,7 @@ def test_the_inverted_cycle_is_caught_by_essence_and_nothing_else(monkeypatch):
 
     If the inversion also tripped a bounds check, the test above would pass without the
     essence invariant contributing anything."""
-    monkeypatch.setattr(TaobotSimple, "_cycle_elements", inverted_cycle_elements)
+    monkeypatch.setattr(ChiPool, "convert", inverted_convert)
     result = run_scenario(replace(_CAPPED_SCENARIO, ticks=50))
 
     kinds = {v.invariant for v in result.violations}
@@ -195,6 +239,75 @@ def test_the_inverted_cycle_is_caught_by_essence_and_nothing_else(monkeypatch):
     )
 
 
+def test_the_inverted_demand_path_is_caught_too(monkeypatch):
+    """Story 1.2's half of the control.
+
+    `brimming` never enters a deficit, so it exercises only the passive path's
+    inversion. Run the control where the *demand* path is the one under a cap and the
+    essence invariant must catch that inversion as well — otherwise the second
+    conversion path would be riding on a net that only ever watched the first."""
+    monkeypatch.setattr(ChiPool, "convert", inverted_convert)
+    result = run_scenario(replace(_DEFICIT_SCENARIO, ticks=50))
+
+    kinds = {v.invariant for v in result.violations}
+    assert kinds == {"essence exact"}, f"expected only essence failures, got {kinds}"
+    assert any(
+        "METAL->WATER" in v.detail for v in result.violations
+    ), "the demand path's own edge must be among the failures"
+
+
+def test_the_negative_control_still_mirrors_the_real_algorithm():
+    """The control is only a control while it is a *copy* of the real thing.
+
+    It is kept in sync by hand, so it drifts silently the moment conversion changes —
+    which is exactly what Story 1.2 did to the previous version. Pin the property that
+    matters: away from any cap the two implementations must agree exactly, because the
+    inversion is the *only* difference between them. If a third conversion path is
+    added and this control is not updated, the numbers part company and this fails."""
+    _, bot = build(replace(next(s for s in SCENARIOS if s.name == "healthy"), ticks=0))
+    # Room everywhere, so no `room` cap binds on the passive cycle; Water empty so the
+    # demand path runs too, and Metal low enough that the *rate* is what limits it
+    # rather than the shortfall. With nothing capped, the inversion is invisible and the
+    # two implementations must agree digit for digit — so any disagreement here is
+    # drift, which is exactly what this test is for.
+    for element in ELEMENT_LIST:
+        bot.storage[element] = bot.storage_capacity[element] * 0.5
+    bot.storage[ElementType.WATER] = 0.0
+    bot.storage[ElementType.METAL] = 0.4
+
+    before = dict(bot.storage)
+    bot.chi.convert()
+    after_real = dict(bot.storage)
+    real_record = [
+        (t.path, t.source, t.target) for t in bot.chi.last_transfers
+    ]
+
+    bot.storage.update(before)
+    inverted_convert(bot.chi)
+    after_inverted = dict(bot.storage)
+    inverted_record = [
+        (t.path, t.source, t.target) for t in bot.chi.last_transfers
+    ]
+
+    drifted = (
+        "the negative control has drifted from the real algorithm — re-derive it "
+        "against the current `ChiPool.convert` rather than relaxing anything"
+    )
+    # A relative tolerance, not `==`: the inversion's one intended difference is
+    # `spent = amount_out` where the real code writes `produced / CYCLE_EFFICIENCY`,
+    # and `(x * 0.8) / 0.8` does not always round-trip to `x`. So the two can differ by
+    # an ULP with nothing wrong at all. Real drift — a whole conversion path missing —
+    # moves storage by ~0.15 here, twelve orders of magnitude above this bound.
+    for element in ELEMENT_LIST:
+        assert after_real[element] == pytest.approx(
+            after_inverted[element], rel=1e-9, abs=1e-12
+        ), f"{drifted} ({element.name})"
+
+    # Storage agreement alone would not notice a control that stopped recording which
+    # path moved what, which is half of what it is mirroring.
+    assert real_record == inverted_record, drifted
+
+
 def test_the_inversion_is_invisible_without_a_cap_which_is_why_brimming_exists():
     """Documents the scenario requirement rather than leaving it as folklore.
 
@@ -204,12 +317,12 @@ def test_the_inversion_is_invisible_without_a_cap_which_is_why_brimming_exists()
     roomy = replace(next(s for s in SCENARIOS if s.name == "healthy"), ticks=50)
 
     baseline = run_scenario(roomy)
-    original = TaobotSimple._cycle_elements
-    TaobotSimple._cycle_elements = inverted_cycle_elements
+    original = ChiPool.convert
+    ChiPool.convert = inverted_convert
     try:
         inverted = run_scenario(roomy)
     finally:
-        TaobotSimple._cycle_elements = original
+        ChiPool.convert = original
 
     assert baseline.ok and inverted.ok
     assert baseline.digest == inverted.digest, (
@@ -313,6 +426,48 @@ def test_every_invariant_is_exercised_by_the_scenario_set():
 
     unexercised = [name for name, count in totals.items() if count == 0]
     assert not unexercised, f"no scenario exercises: {unexercised}"
+
+
+def test_the_water_deficit_scenario_really_crosses_the_deficit_repeatedly():
+    """Story 1.2's scenario has to earn its place, not merely exist.
+
+    A scenario that started below the threshold and stayed there would exercise the
+    demand path but never the *transition*, and one that never dipped under it would
+    exercise neither. Assert both directions actually happen, and that there are ticks
+    where both paths move METAL->WATER at once — the regime the essence invariant is
+    there to police."""
+    world, _ = build(_DEFICIT_SCENARIO)
+
+    was_armed: dict[int, bool] = {}
+    crossings = armed_ticks = quiet_ticks = both_paths = 0
+    # Every living bot, exactly as the harness itself checks — the scenario bot enters
+    # the deficit on tick one and the bots that replace it start from empty storage, so
+    # the transition is exercised more than once per run.
+    for _ in range(_DEFICIT_SCENARIO.ticks):
+        world.tick()
+        for bot in world.taobots:
+            armed = bot.chi.deficit_active
+            if was_armed.get(bot.entity_id, armed) != armed:
+                crossings += 1
+            was_armed[bot.entity_id] = armed
+            armed_ticks += int(armed)
+            quiet_ticks += int(not armed)
+            passive = bot.chi.moved(
+                ConversionPath.PASSIVE, ElementType.METAL, ElementType.WATER
+            )
+            demand = bot.chi.moved(
+                ConversionPath.DEFICIT, ElementType.METAL, ElementType.WATER
+            )
+            if passive[1] > 0.0 and demand[1] > 0.0:
+                both_paths += 1
+
+    assert armed_ticks > 0 and quiet_ticks > 0, "only one side of the threshold was seen"
+    # Measured 4-6 across seeds 20260811, 7 and 99; asserted below that with margin.
+    assert crossings >= 3, f"the threshold was crossed only {crossings} time(s)"
+    assert both_paths >= 100, (
+        f"only {both_paths} tick(s) had both paths moving METAL->WATER — this scenario "
+        "exists to put the essence invariant in the regime where they overlap"
+    )
 
 
 def test_starving_exercises_no_conversion_and_says_so():

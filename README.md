@@ -109,6 +109,33 @@ Resources respawn after a configurable delay. Hazards are permanent.
 
 (Cycles are encoded in `common.py` and will drive chi chemistry in Phase 2.)
 
+### Chi conversion
+
+Every conversion runs in one place — `ChiPool.convert` in `chi.py` — from a single pre-tick snapshot
+of the organism's storage. Two paths use it:
+
+- **The passive Sheng cycle**: each element converts `CYCLE_RATE` (0.001) of its own storage into the
+  next one round the productive cycle, unconditionally, at `CYCLE_EFFICIENCY` (0.8).
+- **The Water-deficit trigger**: when Water storage falls below `chi.water_deficit_threshold` of its
+  capacity, Metal is converted into Water at an elevated rate until Water is back at the threshold.
+  It asks for the *shortfall*, so it regulates rather than pulses — Water is restored to the line and
+  no further, and the trigger neither overshoots nor oscillates.
+
+Both move Metal into Water, so the workshop CSV records each path's contribution separately
+(`chi_passive_M2W_*`, `chi_deficit_M2W_*`) and the inspector marks the Storage section while the
+trigger is armed. Two flags, not one: `chi_deficit_active` is "Water is below the threshold" and
+`chi_deficit_served` is "the demand path actually moved something" — a bot in deficit with an empty
+Metal pool is armed and helpless, and the panel says `no Metal` rather than reading as if the trigger
+were holding the line.
+
+Every path caps what the target receives *before* deriving what the source pays, and applies the
+result through the pool's `request`/`deposit` port, so a source that cannot pay in full never leaves
+the target credited as though it had. Essence is lost to efficiency but never manufactured;
+`tests/invariant_harness.py` asserts that equality on observed storage deltas every tick.
+
+Both tunables are laws, and both were derived rather than chosen — regenerate the sweep behind them
+with `python tools/derive_chi_laws.py all`.
+
 ---
 
 ## Taobots
@@ -195,7 +222,7 @@ files are **overwritten** every time a run starts, so copy them out before re-ru
 | File | Contents | Cadence | Per run |
 |---|---|---|---|
 | `<world>_<timestamp>.csv` | Population-level stats (health, counts) | Every 60 ticks | accumulates |
-| `<world>_workshop_<timestamp>.csv` | Full per-tick state of the single workshop bot: organs, storage, per-element intake, damage, position, behavior, per-leg reserve/integrity/thrust | Every tick (`--workshop` only) | accumulates |
+| `<world>_workshop_<timestamp>.csv` | Full per-tick state of the single workshop bot: organs, storage, per-element intake, damage, position, behavior, per-leg reserve/integrity/thrust, and per-path chi conversion (`chi_deficit_active`, `chi_deficit_served`, `chi_deficit_level`, `chi_passive_M2W_spent`/`_produced`, `chi_deficit_M2W_spent`/`_produced`) | Every tick (`--workshop` only) | accumulates |
 | `<world>_deaths.csv` | Per-bot death record (age, distance, damage, per-element collected) | On each death | **overwritten** |
 | `<world>_focal.csv` | N=5 sampled focal bots: location, state, storage, interval deltas | Every 10 ticks | **overwritten** |
 | `<world>_manifest_<timestamp>.json` | Seed, config name + path + fingerprint, git SHA + dirty flag, Python version, platform, tick count, and the log files this run wrote | Written at start, tick count filled in at exit | accumulates |
@@ -251,8 +278,10 @@ JSON files in `configs/`. Key fields:
 
 `target_population` is maintained at runtime — the world respawns a replacement whenever a taobot dies.
 
-**Laws vs. world settings.** Tunables shared by every world live in `configs/laws.json` — currently
-just `chemistry.degrade_rate`. A config opts in with the `laws` key, a plain filename resolved *beside
+**Laws vs. world settings.** Tunables shared by every world live in `configs/laws.json` —
+`chemistry.degrade_rate` plus the `chi` block that governs the Water-deficit conversion trigger
+(`water_deficit_threshold`, `deficit_conversion_rate`; the derivation is recorded in the file beside
+them). A config opts in with the `laws` key, a plain filename resolved *beside
 that config file*, never against the working directory; omit the key to declare no laws. The config's
 own blocks are merged over the laws **key by key**: declaring a block overrides only the keys it names
 and inherits the rest of that block. `configs/fire_arena.json` overrides `degrade_rate` this way and

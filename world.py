@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from chi import ChiLaws, default_chi_laws
 from common import ELEMENT_LIST, ElementType
 from entities import Hazard, Resource
 from math_utils import torus_distance
@@ -165,6 +166,10 @@ class WorldConfig:
     hazards: HazardConfig
     taobots: TaobotConfig
     chemistry: ChemistryConfig
+    # Defaulted so a `WorldConfig` can still be built by hand, outside `from_json`, the
+    # way tests and sandboxes do. A law is universal, so the shipped one is the right
+    # default rather than a sentinel that would have to be checked everywhere.
+    chi: ChiLaws = field(default_factory=default_chi_laws)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "WorldConfig":
@@ -176,7 +181,10 @@ class WorldConfig:
         the base and the config's own blocks are merged over them **key by key**: a
         block the config declares overrides only the keys it names and inherits the
         rest of that block from the laws. `configs/fire_arena.json` overrides one law
-        this way. Omit the `laws` key to declare that a config has no laws."""
+        this way. Omit the `laws` key to declare that a config has no laws.
+
+        The `chi` block is the one exception to "declare it or fail": see the comment
+        beside it below."""
         config_path = Path(path)
         with open(config_path) as f:
             data = json.load(f)
@@ -230,6 +238,17 @@ class WorldConfig:
             ),
             chemistry=ChemistryConfig(
                 degrade_rate=float(c["degrade_rate"]),
+            ),
+            # Unlike `chemistry`, a missing `chi` block falls back to the shipped laws
+            # rather than raising. `chemistry.degrade_rate` is reserved and unread, so
+            # demanding it is free; the chi laws are load-bearing every tick, and the
+            # organism already resolves them from `configs/laws.json` when it is built
+            # without a world. A hand-written config that names no laws file therefore
+            # runs under the same universal laws instead of a different physics.
+            chi=(
+                ChiLaws.from_mapping(data["chi"])
+                if "chi" in data
+                else default_chi_laws()
             ),
         )
 
@@ -539,6 +558,7 @@ class World:
             archetype=archetype,
             rng=derive_stream(self.seed, "taobot", eid),
             run_seed=self.seed,
+            chi_laws=self.config.chi,
         )
         self._taobots[eid] = t
         self._taobot_hash.register(eid, x, y)

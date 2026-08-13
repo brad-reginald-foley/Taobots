@@ -1,9 +1,8 @@
 import pytest
 
+from chi import CYCLE_EFFICIENCY, CYCLE_RATE
 from common import ElementType
 from taobot_simple import (
-    CYCLE_EFFICIENCY,
-    CYCLE_RATE,
     DERIVED_ORGANS,
     EARTH_CRISIS_DRAIN,
     EARTH_CRISIS_STORAGE_FRACTION,
@@ -331,7 +330,7 @@ def test_cycle_transfers_storage():
     t = TaobotSimple(x=0.0, y=0.0, entity_id=1)
     t.storage[ElementType.WATER] = 10.0
     t.storage[ElementType.WOOD] = 0.0
-    t._cycle_elements()
+    t.chi.convert()
     assert t.storage[ElementType.WATER] < 10.0
     assert t.storage[ElementType.WOOD] > 0.0
 
@@ -340,7 +339,7 @@ def test_cycle_is_lossy():
     t = TaobotSimple(x=0.0, y=0.0, entity_id=1)
     t.storage[ElementType.WATER] = 10.0
     t.storage[ElementType.WOOD] = 0.0
-    t._cycle_elements()
+    t.chi.convert()
     water_spent = 10.0 - t.storage[ElementType.WATER]
     wood_gained = t.storage[ElementType.WOOD]
     # spent = CYCLE_RATE × 10; produced = spent × CYCLE_EFFICIENCY
@@ -354,7 +353,7 @@ def test_cycle_respects_capacity():
     t.storage[ElementType.WATER] = 10.0
     t.storage[ElementType.WOOD] = t.storage_capacity[ElementType.WOOD]  # full
     water_before = t.storage[ElementType.WATER]
-    t._cycle_elements()
+    t.chi.convert()
     assert t.storage[ElementType.WATER] == pytest.approx(water_before)
 
 
@@ -362,7 +361,7 @@ def test_cycle_zero_source_no_transfer():
     t = TaobotSimple(x=0.0, y=0.0, entity_id=1)
     t.storage[ElementType.WATER] = 0.0
     t.storage[ElementType.WOOD] = 0.0
-    t._cycle_elements()
+    t.chi.convert()
     assert t.storage[ElementType.WOOD] == pytest.approx(0.0)
 
 

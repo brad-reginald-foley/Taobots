@@ -247,6 +247,19 @@ class WorkshopLogger:
         "intake_WOOD", "intake_FIRE", "intake_WATER", "intake_EARTH", "intake_METAL",
         "tick_damage",
         "resources_collected", "distance_moved", "damage_taken_total",
+        # Chi conversion, split by path. Both the passive Sheng cycle and the
+        # demand-triggered path move METAL->WATER, so the change in `storage_METAL`
+        # and `storage_WATER` alone cannot say whether both ran once or one ran
+        # twice — these four columns are the only thing that can. `spent` is what
+        # Metal paid and `produced` is what Water received; the difference is the
+        # 20% lost to CYCLE_EFFICIENCY, per path, per tick.
+        # `active` is "Water is below the threshold"; `served` is "the demand path
+        # actually moved something". A bot in deficit with no Metal left is active and
+        # unserved, and a column that could not say so would report the trigger working
+        # while nothing moved.
+        "chi_deficit_active", "chi_deficit_served", "chi_deficit_level",
+        "chi_passive_M2W_spent", "chi_passive_M2W_produced",
+        "chi_deficit_M2W_spent", "chi_deficit_M2W_produced",
     ]
 
     @staticmethod
@@ -291,6 +304,18 @@ class WorkshopLogger:
             "damage_taken_total": round(taobot.damage_taken_total, 3),
             "tick_damage": round(taobot._interval_damage, 4),
         }
+        # Read off the state snapshot the inspector reads, so the CSV and the panel
+        # can never disagree about what the trigger did this tick.
+        chi = taobot.get_state()["chi"]
+        passive_spent, passive_produced = chi["passive_metal_to_water"]
+        deficit_spent, deficit_produced = chi["deficit_metal_to_water"]
+        row["chi_deficit_active"] = int(chi["deficit_active"])
+        row["chi_deficit_served"] = int(chi["deficit_served"])
+        row["chi_deficit_level"] = round(chi["deficit_level"], 4)
+        row["chi_passive_M2W_spent"] = round(passive_spent, 6)
+        row["chi_passive_M2W_produced"] = round(passive_produced, 6)
+        row["chi_deficit_M2W_spent"] = round(deficit_spent, 6)
+        row["chi_deficit_M2W_produced"] = round(deficit_produced, 6)
         for e in self._elements:
             row[f"organ_{e.name}"] = round(taobot.organ(e), 3)
             row[f"storage_{e.name}"] = round(taobot.storage[e], 3)
@@ -351,6 +376,11 @@ def config_fingerprint(config: WorldConfig) -> str:
             "target_population": config.taobots.target_population,
         },
         "chemistry": {"degrade_rate": config.chemistry.degrade_rate},
+        # The chi laws are read every tick, so a run is not replayable without them.
+        "chi": {
+            "water_deficit_threshold": config.chi.water_deficit_threshold,
+            "deficit_conversion_rate": config.chi.deficit_conversion_rate,
+        },
     }
     canonical = json.dumps(resolved, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

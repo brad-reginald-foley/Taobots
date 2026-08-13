@@ -30,13 +30,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator
 
+from chi import CYCLE_EFFICIENCY, CYCLE_SEQUENCE
 from common import ELEMENT_LIST, ElementType
-from taobot_simple import (
-    CYCLE_EFFICIENCY,
-    CYCLE_SEQUENCE,
-    ORGAN_MAX,
-    TaobotSimple,
-)
+from taobot_simple import ORGAN_MAX, TaobotSimple
 from tests.state_snapshot import state_repr
 from world import World, WorldConfig
 
@@ -151,6 +147,21 @@ SCENARIOS: list[Scenario] = [
         hazards=0,
     ),
     Scenario(
+        # Story 1.2. Water starts empty against a full Metal pool, so the demand path
+        # fires on tick one; resources are present so the bot also *eats* Water and is
+        # pushed back above the threshold, then walks itself under it again. That
+        # repeated crossing is the point: it is the only regime where two paths move
+        # METAL->WATER in the same tick, so it is the only one where the essence
+        # invariant is checking their *combined* arithmetic rather than one path's.
+        # (It does not distinguish "both ran once" from "one ran twice" — see
+        # `ObservedStorage` — which is why `tests/test_chi.py` asserts the transfer
+        # list as well.)
+        name="water deficit",
+        storage={"WOOD": 0.5, "WATER": 0.0, "METAL": 0.95, "FIRE": 0.5, "EARTH": 0.5},
+        resources=150,
+        hazards=0,
+    ),
+    Scenario(
         # Storage just below capacity, so every target's `room` is smaller than the
         # amount its source offers and all five transfers are capped. A correct cycle
         # derives `spent` from the capped `produced` and stays exact here; an inverted
@@ -185,8 +196,14 @@ class ObservedStorage(dict):
 
     It survives a second conversion path being added (Story 1.2): more writes simply
     accumulate into the same totals, and the identity still has to hold across them.
-    That is the point — a whole-phase net delta could not tell a correct second path
-    from the same path running twice, and this can."""
+
+    **What it does not do** is tell a correct second path from the same path running
+    twice. An earlier version of this docstring claimed it did; it does not. The check
+    compares `outflow[source] x CYCLE_EFFICIENCY` against `inflow[target]`, and a
+    duplicated transfer doubles both sides — the ratio is preserved exactly and the
+    assertion passes. What this catches is a second path that gets the *arithmetic*
+    wrong, which is a real and different risk. Telling "both ran once" from "one ran
+    twice" is `ChiPool.last_transfers`'s job, asserted in `tests/test_chi.py`."""
 
     def __init__(self, base: dict) -> None:
         super().__init__(base)
@@ -224,7 +241,12 @@ def instrument(bot: TaobotSimple) -> ObservedStorage:
     """Give `bot` an observing `storage` dict, armed only during the chi phase.
 
     Instance-level, not class-level: the harness observes the bots it built and leaves
-    the class untouched, so two scenarios in one process cannot contaminate each other."""
+    the class untouched, so two scenarios in one process cannot contaminate each other.
+
+    The wrapped seam is `ChiPool.convert` — the single conversion site (`AD-4`), not a
+    delegating method on the organism. Assigning `bot.storage` reaches the pool's dict
+    through the organism's property, so the observer and the pool cannot end up looking
+    at different dicts."""
     existing = getattr(bot, "_harness_storage", None)
     if existing is not None:
         return existing
@@ -233,7 +255,7 @@ def instrument(bot: TaobotSimple) -> ObservedStorage:
     bot.storage = observed
     bot._harness_storage = observed  # type: ignore[attr-defined]
 
-    inner = bot._cycle_elements
+    inner = bot.chi.convert
 
     def watched_cycle() -> None:
         observed.begin_phase()
@@ -242,7 +264,7 @@ def instrument(bot: TaobotSimple) -> ObservedStorage:
         finally:
             observed.end_phase()
 
-    bot._cycle_elements = watched_cycle  # type: ignore[method-assign]
+    bot.chi.convert = watched_cycle  # type: ignore[method-assign]
     return observed
 
 

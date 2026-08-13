@@ -18,6 +18,7 @@ import pytest
 
 import panel_layout
 from common import (
+    DIM_WHITE,
     ELEMENT_LIST,
     PANEL_COLOR,
     PANEL_W,
@@ -549,4 +550,197 @@ def test_plain_panel_with_no_bot_draws(surface) -> None:
     renderer._draw_organ_graph(layout)
     for section in layout.sections:
         for row in section.rows:
+            assert _painted(surface, row.rect)
+
+
+# --- Story 1.2: the Water-deficit trigger is watchable on the panel ---------
+#
+# Colour alone is not coverage here. The Water row's label carries three numbers that
+# are easy to confuse and mean different things — the level Water is held to, the Water
+# the *demand* path produced, and the Metal it spent — and the passive path's figure sits
+# right beside them. Showing any of the wrong ones still paints amber pixels, so these
+# assert the rendered *string*, reference-rendered and pixel-compared, the same way
+# `test_leg_reserve_label_is_painted_whole_and_flush_right` does.
+
+# Deliberately far apart, and none of them a round number: swapping produced for spent,
+# or the deficit path's figure for the passive path's, or the level for zero, must each
+# change the label rather than landing on the same text by luck.
+_DEFICIT_LEVEL = 0.16
+_DEFICIT_PRODUCED = 0.152
+_DEFICIT_SPENT = 0.19
+_PASSIVE_PRODUCED = 0.008
+_PASSIVE_SPENT = 0.01
+
+
+def _with_chi(
+    bot: _StubBot, *, active: bool, served: bool = True, produced: float = _DEFICIT_PRODUCED
+) -> _StubBot:
+    """Give a stub bot the chi block `get_state` now carries."""
+    original = bot.get_state
+
+    def get_state() -> dict:
+        state = original()
+        state["chi"] = {
+            "deficit_active": active,
+            "deficit_served": served,
+            "deficit_level": _DEFICIT_LEVEL,
+            "passive_metal_to_water": (_PASSIVE_SPENT, _PASSIVE_PRODUCED),
+            "deficit_metal_to_water": (_DEFICIT_SPENT, produced),
+        }
+        return state
+
+    bot.get_state = get_state  # type: ignore[method-assign]
+    return bot
+
+
+def _storage_rows(layout: panel_layout.PanelLayout) -> list[panel_layout.Row]:
+    section = layout.section("storage")
+    assert section is not None
+    return list(section.rows)
+
+
+def _water_row(layout: panel_layout.PanelLayout) -> panel_layout.Row:
+    bars = [r for r in _storage_rows(layout) if r.kind is RowKind.BAR]
+    return bars[[e.name for e in ELEMENT_LIST].index("WATER")]
+
+
+def _colors(surface, rect: panel_layout.Rect) -> set[tuple[int, int, int]]:
+    return {
+        surface.get_at((x, y))[:3]
+        for y in range(rect.y, rect.bottom)
+        for x in range(rect.x, rect.right)
+    }
+
+
+def _assert_label_painted(surface, renderer: Renderer, row: panel_layout.Rect, label: str):
+    """The row's right-hand label must be exactly `label`, on the pixels.
+
+    Rendered in `DIM_WHITE` because that is what `_draw_compact_bar_row` uses for every
+    label — the deficit colour marks the swatch and the bar, not the text."""
+    import pygame
+
+    geom = panel_layout.bar_row(row, "WATER", label, char_w=renderer._char_w_sm)
+    assert geom.label == label, f"the label was truncated to {geom.label!r}"
+
+    expected = pygame.Surface((geom.label_right - geom.label_x, row.h))
+    expected.fill(PANEL_COLOR)
+    expected.blit(renderer._font_sm.render(label, True, DIM_WHITE), (0, 0))
+    actual = surface.subsurface(
+        pygame.Rect(geom.label_x, row.y, expected.get_width(), row.h)
+    )
+    assert pygame.image.tostring(actual, "RGB") == pygame.image.tostring(expected, "RGB"), (
+        f"the Water row does not read {label!r}"
+    )
+
+
+@pytest.mark.parametrize("workshop", [True, False])
+def test_the_deficit_trigger_is_visible_in_the_storage_section(surface, workshop) -> None:
+    """The trigger firing has to be watchable, not only readable from a CSV.
+
+    It is shown inside Storage rather than in a row of its own because the panel is at
+    its vertical ceiling — see deferred-work.md — and because a Water deficit is a fact
+    about Water storage, where a reader already looks. Costing no rows is also why
+    *both* inspectors get it: `python main.py` is the mode a user opens first, and a bot
+    starving there should not be the one case the panel stays silent about."""
+    renderer = Renderer(surface, workshop=workshop)
+    bot = _with_chi(_StubBot(2), active=True)
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, workshop)
+
+    heading = next(r for r in _storage_rows(layout) if r.kind is RowKind.HEADING)
+    assert Renderer._DEFICIT_COLOR in _colors(surface, heading.rect), (
+        "the Storage heading must call out the deficit"
+    )
+    assert Renderer._DEFICIT_COLOR in _colors(surface, _water_row(layout).rect), (
+        "the Water row must be marked while the trigger is armed"
+    )
+
+
+@pytest.mark.parametrize("workshop", [True, False])
+def test_the_water_row_reads_the_demand_paths_own_production(surface, workshop) -> None:
+    """The label says what *this* trigger did — not what it spent, and not what the
+    passive cycle did.
+
+    All three numbers are on the same row's data and all three paint amber, so a colour
+    assertion passes on any of them. This is the exact confusion the story exists to
+    prevent: reporting the passive path's contribution under the deficit trigger would
+    make "both ran once" and "one ran twice" indistinguishable on the panel."""
+    renderer = Renderer(surface, workshop=workshop)
+    bot = _with_chi(_StubBot(2), active=True)
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, workshop)
+
+    _assert_label_painted(
+        surface, renderer, _water_row(layout).rect, f"<{_DEFICIT_LEVEL:.2f} +0.152"
+    )
+
+
+def test_the_deficit_label_is_a_pure_function_of_the_chi_block() -> None:
+    """Pinned as a string too, so the three confusions are named rather than implied."""
+    chi = {
+        "deficit_active": True,
+        "deficit_served": True,
+        "deficit_level": _DEFICIT_LEVEL,
+        "passive_metal_to_water": (_PASSIVE_SPENT, _PASSIVE_PRODUCED),
+        "deficit_metal_to_water": (_DEFICIT_SPENT, _DEFICIT_PRODUCED),
+    }
+    label = Renderer._deficit_label(chi)
+
+    assert label == "<0.16 +0.152"
+    assert f"{_DEFICIT_SPENT:.3f}" not in label, "that is the Metal spent, not Water made"
+    assert f"{_PASSIVE_PRODUCED:.3f}" not in label, "that is the passive path's figure"
+    assert "0.00" not in label, "the held level must be the real one"
+
+
+@pytest.mark.parametrize("workshop", [True, False])
+def test_an_unserved_deficit_says_so_rather_than_reading_as_working(
+    surface, workshop
+) -> None:
+    """A bot in deficit with no Metal left is armed and helpless.
+
+    The panel must not read the same as armed-and-working: `+0.000` beside a level is
+    easy to skim past as "the trigger is holding the line", when in fact nothing is
+    moving and the legs are about to start degrading."""
+    renderer = Renderer(surface, workshop=workshop)
+    bot = _with_chi(_StubBot(2), active=True, served=False, produced=0.0)
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, workshop)
+
+    _assert_label_painted(
+        surface, renderer, _water_row(layout).rect, f"<{_DEFICIT_LEVEL:.2f} no Metal"
+    )
+
+
+def test_no_deficit_colour_appears_when_the_trigger_is_quiet(surface) -> None:
+    """The counterpart: an always-amber panel would be no signal at all."""
+    renderer = Renderer(surface, workshop=True)
+    bot = _with_chi(_StubBot(2), active=False)
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, True)
+
+    for row in _storage_rows(layout):
+        assert Renderer._DEFICIT_COLOR not in _colors(surface, row.rect)
+
+
+def test_a_quiet_water_row_still_reads_as_a_normal_storage_row(surface) -> None:
+    """And the ordinary label is not disturbed by the deficit branch existing."""
+    renderer = Renderer(surface, workshop=True)
+    bot = _with_chi(_StubBot(2), active=False)
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, True)
+
+    # The stub holds 19.95 of a 20.0 pool — the plain `value/capacity` form.
+    _assert_label_painted(surface, renderer, _water_row(layout).rect, "19.9/20")
+
+
+def test_a_bot_state_without_a_chi_block_still_draws(surface) -> None:
+    """The panel must not require the block: `_draw_organ_and_storage` is shared with
+    the plain inspector and with any caller that predates Story 1.2."""
+    renderer = Renderer(surface, workshop=True)
+    bot = _StubBot(2)  # no chi block at all
+    layout = renderer._panel_layout(as_bot(bot))
+    _draw(renderer, surface, bot, layout, True)
+
+    for row in _storage_rows(layout):
+        if row.kind in INKED_KINDS:
             assert _painted(surface, row.rect)

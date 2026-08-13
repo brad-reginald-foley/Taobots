@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from body_factory import BodyFactory
 from body_parts import BodyPart, LegPart
+from chi import ChiLaws, ChiPool, ConversionPath
 from common import ELEMENT_LIST, ElementType
 from math_utils import torus_direction, torus_distance, wrap_position
 from rng import derive_stream, new_seed
@@ -58,18 +59,9 @@ ORGAN_STORAGE_DRAIN: dict[str, float] = {
 # is either derived from parts or funded by a storage drain, never both and never neither.
 DERIVED_ORGANS: frozenset[ElementType] = frozenset({ElementType.WATER})
 
-# Generative (Sheng) cycle: each element converts a fraction of its storage into the next.
-# All five transfers are computed simultaneously from pre-tick values to avoid directional bias.
-CYCLE_RATE: float = 0.001       # fraction of source storage converted per tick
-CYCLE_EFFICIENCY: float = 0.8   # fraction that arrives at target (20% lost per step)
-
-CYCLE_SEQUENCE: list[tuple[ElementType, ElementType]] = [
-    (ElementType.WATER, ElementType.WOOD),
-    (ElementType.WOOD,  ElementType.FIRE),
-    (ElementType.FIRE,  ElementType.EARTH),
-    (ElementType.EARTH, ElementType.METAL),
-    (ElementType.METAL, ElementType.WATER),
-]
+# The generative (Sheng) cycle and every other conversion constant now live on the chi
+# tier, in `chi.py`, together with the code that uses them (`AD-4`). Import them from
+# there — this module owns no conversion arithmetic.
 
 DEFAULT_PARAMS: dict = {
     "sensing_range": 6.0,
@@ -165,9 +157,10 @@ def _angle_diff(a: float, b: float) -> float:
 
 class TaobotSimple:
     """Rule-based taobot for Phase 1. Behaviour is driven by scalar parameters;
-    no neural networks or chi pools yet.
+    no neural networks yet. Its essence lives in a `ChiPool` (`self.chi`), which owns
+    every conversion — this class owns none.
 
-    Each tick: sense → decide → act → metabolize.
+    Each tick: sense → decide → act → body parts → metabolize → chi.
 
     Organ system (replaces single health value):
       Earth  — body structure; death condition at 0; damaged by Metal attacks
@@ -199,6 +192,7 @@ class TaobotSimple:
         archetype: str = "default",
         rng: random.Random | None = None,
         run_seed: int | None = None,
+        chi_laws: ChiLaws | None = None,
     ) -> None:
         """Create a taobot at (x, y) with the given entity_id.
 
@@ -212,7 +206,12 @@ class TaobotSimple:
 
         Both default to `None` for bots built directly (tests, sandboxes), in which
         case a fresh run seed is generated and the stream is derived from it exactly as
-        the world would. That is still a private stream, never a shared global."""
+        the world would. That is still a private stream, never a shared global.
+
+        `chi_laws` are the laws of Pangu this organism's chi tier obeys —
+        `World.spawn_taobot` passes the ones its config resolved. `None` falls back to
+        the shipped `configs/laws.json`, so a bot built without a world obeys the same
+        laws rather than a second copy of the numbers."""
         self.x = x
         self.y = y
         self.entity_id = entity_id
@@ -231,7 +230,9 @@ class TaobotSimple:
             ElementType[k]: v for k, v in p["affinity"].items()
         }
         self.hazard_avoidance_range: float = p["hazard_avoidance_range"]
-        self.storage_capacity: dict[ElementType, float] = {
+        # Held in a local until the pool exists — `storage_capacity` is a property over
+        # `self.chi.capacity`, so there is nowhere to put it before then.
+        storage_capacity: dict[ElementType, float] = {
             ElementType[k]: v for k, v in p["storage_capacity"].items()
         }
         self.collect_radius: float = p["collect_radius"]
@@ -270,8 +271,15 @@ class TaobotSimple:
             / max(1e-9, self._moment_of_inertia)
         )
 
-        # Storage and collection state
-        self.storage: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
+        # The chi tier (`AD-2`): the pool this organism's essence lives in, and the
+        # only place conversion happens (`AD-4`). The organism holds the pool; it does
+        # not hold conversion logic. E3 substitutes a MeridianNetwork behind the same
+        # port without touching this class.
+        self.chi: ChiPool = ChiPool(
+            {e: 0.0 for e in ELEMENT_LIST}, storage_capacity, chi_laws
+        )
+
+        # Collection state
         self.behavior_state: str = "searching"
         self.target_entity_id: int | None = None
         self.age_ticks: int = 0
@@ -285,6 +293,38 @@ class TaobotSimple:
         # Interval tracking (reset externally every N ticks by RunLogger)
         self._interval_resources: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
         self._interval_damage: float = 0.0
+
+    # --- Chi ---
+
+    @property
+    def storage(self) -> dict[ElementType, float]:
+        """This organism's chi pool, as the dict every existing consumer expects.
+
+        One dict, owned by `self.chi`, reached from two names — never two dicts that
+        could drift. Resource collection, body-part replenish and organ upkeep still
+        write it directly; only conversion has moved behind the port so far, which is
+        the deliberate partial migration Story 1.2 describes. The setter exists so
+        anything that swaps the dict wholesale (the invariant harness wraps it in an
+        observer) swaps the pool's too, rather than leaving the two out of step."""
+        return self.chi.storage
+
+    @storage.setter
+    def storage(self, value: dict[ElementType, float]) -> None:
+        self.chi.storage = value
+
+    @property
+    def storage_capacity(self) -> dict[ElementType, float]:
+        """The ceilings on that pool — likewise one dict, reached from two names.
+
+        A property for the same reason `storage` is: the pool caps every deposit
+        against these, so a caller that swapped the organism's copy while the pool kept
+        the old one would leave conversion enforcing ceilings nothing else believed in.
+        Mutating the dict in place was always fine; this makes rebinding it fine too."""
+        return self.chi.capacity
+
+    @storage_capacity.setter
+    def storage_capacity(self, value: dict[ElementType, float]) -> None:
+        self.chi.capacity = value
 
     # --- Organs ---
 
@@ -320,13 +360,19 @@ class TaobotSimple:
     # --- Main tick ---
 
     def tick(self, world: "World") -> None:
-        """Advance one simulation tick: sense, decide, act, body, metabolize, cycle."""
+        """Advance one simulation tick: sense, decide, act, body, metabolize, chi.
+
+        `AD-1` orders the phases `sense -> decide -> act -> chi -> upkeep -> age`, but
+        conversion has always run *after* upkeep here and still does. Reordering would
+        change behaviour above the deficit threshold, which Story 1.2's own acceptance
+        forbids ("byte-identical to the pre-change build"); the narrower requirement
+        wins and the restructure is deferred with its own baseline."""
         nearby_resources, nearby_hazards = self._sense(world)
         self._decide(nearby_resources, nearby_hazards, world)
         self._act(world)
         self._tick_body_parts()
         self._metabolize()
-        self._cycle_elements()
+        self.chi.convert()
         self.age_ticks += 1
 
     # --- Sense ---
@@ -575,27 +621,6 @@ class TaobotSimple:
 
     # --- External callbacks ---
 
-    def _cycle_elements(self) -> None:
-        """Convert a fraction of each element's storage into the next in the generative cycle.
-
-        All five transfers are computed from pre-tick storage values then applied
-        simultaneously, preventing directional bias within a single tick. If a target
-        slot is at capacity the transfer is suppressed and the source is preserved."""
-        transfers: list[tuple[ElementType, ElementType, float, float]] = []
-        for source, target in CYCLE_SEQUENCE:
-            amount_out = CYCLE_RATE * self.storage[source]
-            room = self.storage_capacity[target] - self.storage[target]
-            produced = min(amount_out * CYCLE_EFFICIENCY, room)
-            if produced <= 0.0:
-                continue
-            spent = produced / CYCLE_EFFICIENCY
-            transfers.append((source, target, spent, produced))
-        for source, target, spent, produced in transfers:
-            self.storage[source] = max(0.0, self.storage[source] - spent)
-            self.storage[target] += produced
-
-    # --- External callbacks ---
-
     def record_damage(self, amount: float) -> None:
         """Apply incoming damage, routed through Metal armor before reaching Earth.
 
@@ -641,6 +666,20 @@ class TaobotSimple:
             "resources_by_element": {e.name: self.resources_by_element[e] for e in ELEMENT_LIST},
             "distance_moved": self.distance_moved,
             "damage_taken_total": self.damage_taken_total,
+            # Last tick's conversion, split by path. Both paths move METAL->WATER, so
+            # a storage delta alone cannot say whether both ran once or one ran twice —
+            # the split is the only thing that can.
+            "chi": {
+                "deficit_active": self.chi.deficit_active,
+                "deficit_served": self.chi.deficit_served,
+                "deficit_level": self.chi.deficit_level(),
+                "passive_metal_to_water": self.chi.moved(
+                    ConversionPath.PASSIVE, ElementType.METAL, ElementType.WATER
+                ),
+                "deficit_metal_to_water": self.chi.moved(
+                    ConversionPath.DEFICIT, ElementType.METAL, ElementType.WATER
+                ),
+            },
             "legs": [
                 {
                     "index": i,

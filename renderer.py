@@ -673,7 +673,13 @@ class Renderer:
                 f"D{state['distance_moved']:.0f} Dmg{state['damage_taken_total']:.0f}",
             )
 
-    def _draw_organ_and_storage(self, state: dict, layout: panel_layout.PanelLayout) -> None:
+    # Warning amber for a Water pool the demand path is holding up. Distinct from the
+    # element colours so "this element is in deficit" never reads as "this element".
+    _DEFICIT_COLOR = (240, 170, 40)
+
+    def _draw_organ_and_storage(
+        self, state: dict, layout: panel_layout.PanelLayout
+    ) -> None:
         organs = _RowCursor(layout.section("organs"), layout.content_clipped)
         self._blit_separator(organs.next(panel_layout.RowKind.SEPARATOR))
         # "aggregate" because the Water organ here is the mean of the leg integrities
@@ -688,16 +694,51 @@ class Renderer:
                 ELEMENT_COLOR[e], e.name, val, 100.0, f"{val:.1f}",
             )
 
+        # The Water-deficit trigger is shown inside the Storage section rather than in a
+        # row of its own: the panel is already at its vertical ceiling (see
+        # deferred-work.md), and the deficit *is* a fact about Water storage — the place
+        # a reader already looks. Nothing new is allotted, so no leg slot is spent, which
+        # is also why both inspectors show it rather than only the workshop one.
+        chi = state.get("chi", {})
+        deficit = bool(chi.get("deficit_active"))
+
         storage = _RowCursor(layout.section("storage"), layout.content_clipped)
         self._blit_separator(storage.next(panel_layout.RowKind.SEPARATOR))
-        self._blit_row_text(storage.next(panel_layout.RowKind.HEADING), "Storage", bold=True)
+        self._blit_row_text(
+            storage.next(panel_layout.RowKind.HEADING),
+            "Storage  H2O DEFICIT" if deficit else "Storage",
+            self._DEFICIT_COLOR if deficit else DIM_WHITE,
+            bold=True,
+        )
         for e in ELEMENT_LIST:
             val = state["storage"][e.name]
             cap = state["storage_capacity"][e.name]
+            color = ELEMENT_COLOR[e]
+            label = f"{val:.1f}/{cap:.0f}"
+            if deficit and e is ElementType.WATER:
+                color = self._DEFICIT_COLOR
+                label = self._deficit_label(chi)
             self._draw_compact_bar_row(
-                storage.next(panel_layout.RowKind.BAR),
-                ELEMENT_COLOR[e], e.name, val, cap, f"{val:.1f}/{cap:.0f}",
+                storage.next(panel_layout.RowKind.BAR), color, e.name, val, cap, label,
             )
+
+    @staticmethod
+    def _deficit_label(chi: dict) -> str:
+        """The Water row's right-hand label while the trigger is armed.
+
+        Says the level Water is being held to, and then what is actually happening:
+        the Water the *demand* path produced this tick, or that there is no Metal to
+        produce it from. Armed-but-unserved has to be distinguishable from armed-and-
+        working — a panel that reads the same either way tells a reader the trigger is
+        holding the line while a bot starves next to an empty Metal pool.
+
+        The figure is the demand path's `produced`, not its `spent` and not the passive
+        path's: what a reader is watching for is the Water this trigger made, and the
+        three differ. Pure function so it can be asserted as a string."""
+        level = chi["deficit_level"]
+        if not chi.get("deficit_served"):
+            return f"<{level:.2f} no Metal"
+        return f"<{level:.2f} +{chi['deficit_metal_to_water'][1]:.3f}"
 
     def _draw_legs(self, state: dict, layout: panel_layout.PanelLayout) -> None:
         legs_section = layout.section("legs")

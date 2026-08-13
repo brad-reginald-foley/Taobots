@@ -90,3 +90,70 @@ def test_loggers_emit_a_column_for_every_organ(one_bot_world, monkeypatch, tmp_p
     run.on_tick(world)
     run.close()
     assert expected <= set(_read_rows(tmp_path / "logs" / "t_focal.csv")[0])
+
+
+def _workshop_row(bot, monkeypatch, tmp_path, name="t"):
+    monkeypatch.chdir(tmp_path)
+    logger = WorkshopLogger(name, ts=TS, n_legs=len(bot.legs))
+    logger.log_tick(bot, tick=1)
+    logger.close()
+    return _read_rows(logger._path)[0]
+
+
+def test_the_workshop_log_attributes_conversion_per_path(one_bot_world, monkeypatch, tmp_path):
+    """Story 1.2's attribution requirement, at the place it has to be readable.
+
+    Both paths move METAL->WATER, so `storage_METAL` and `storage_WATER` alone cannot
+    say whether both ran once or one ran twice. Drive a tick where both do run and
+    assert the CSV separates them."""
+    world, bot = one_bot_world
+    bot.storage[ElementType.WATER] = 0.0
+    bot.storage[ElementType.METAL] = 10.0
+    bot.chi.convert()
+    assert bot.chi.deficit_active
+
+    row = _workshop_row(bot, monkeypatch, tmp_path)
+
+    assert row["chi_deficit_active"] == "1"
+    passive = float(row["chi_passive_M2W_produced"])
+    demand = float(row["chi_deficit_M2W_produced"])
+    assert passive > 0.0 and demand > 0.0
+    assert demand > passive, "the demand path is the elevated one"
+    # Each path's own spend is carried too, so the 20% efficiency loss is checkable
+    # per path rather than only in aggregate.
+    assert float(row["chi_passive_M2W_spent"]) > passive
+    assert float(row["chi_deficit_M2W_spent"]) > demand
+    assert float(row["chi_deficit_level"]) == pytest.approx(bot.chi.deficit_level(), abs=1e-4)
+
+
+def test_the_workshop_log_shows_the_trigger_quiet_above_the_threshold(
+    one_bot_world, monkeypatch, tmp_path
+):
+    """The other side of the same column: no deficit, no demand contribution."""
+    world, bot = one_bot_world
+    bot.storage[ElementType.WATER] = 15.0
+    bot.storage[ElementType.METAL] = 10.0
+    bot.chi.convert()
+
+    row = _workshop_row(bot, monkeypatch, tmp_path)
+
+    assert row["chi_deficit_active"] == "0"
+    assert float(row["chi_deficit_M2W_produced"]) == 0.0
+    assert float(row["chi_passive_M2W_produced"]) > 0.0
+
+
+def test_the_chi_laws_are_in_the_config_fingerprint(default_config):
+    """A run is not replayable without them — they are read every tick.
+
+    The fingerprint exists so an edited config cannot silently produce a different run
+    under the same seed, and the chi laws are now part of what "the same config" means."""
+    from dataclasses import replace
+
+    from chi import ChiLaws
+    from main import config_fingerprint
+
+    before = config_fingerprint(default_config)
+    changed = replace(
+        default_config, chi=ChiLaws(water_deficit_threshold=0.5, deficit_conversion_rate=0.5)
+    )
+    assert config_fingerprint(changed) != before
