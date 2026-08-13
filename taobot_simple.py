@@ -85,11 +85,32 @@ DEFAULT_PARAMS: dict = {
     # With phi=0 each leg contributes exactly T to forward speed → T_base = speed/2 = 0.75.
     # max_thrust=1.5 covers the fastest archetype (wanderer speed=2.2, T_base=1.1)
     # and leaves headroom for differential steering corrections.
+    #
+    # `capacity` and `drain_max` are traits (AD-13), derived 2026-08-12 in the workshop
+    # because Water was visibly inert: it was the slowest-moving element on screen while
+    # the bot was plainly walking.
+    #
+    #   drain_max 0.005 → 0.020. Two legs at cruise draw `drain_max` per tick between
+    #   them (each leg spends |thrust|/max_thrust × drain_max, and T_base/max_thrust is
+    #   0.5). At 0.005 that was 0.005/tick against Fire's 0.015–0.030 and Wood's
+    #   0.010–0.020 — three to six times slower than anything else, so Water looked
+    #   static. 0.020 puts it in the same band. Note Water is still the one element not
+    #   scaled by the metabolic multiplier, since legs do not consult it.
+    #
+    #   capacity 4.0 → 0.30. The reserve is meant to smooth brief gaps, not remove
+    #   starvation. At 0.010/tick per leg, 4.0 was a 400-tick buffer against a measured
+    #   median dry spell of 29 ticks — 14× too large, so leg integrity never moved off
+    #   1.0 in any unforced run. 0.30 covers roughly one median dry spell.
+    #
+    # Measured over 6000 ticks of default_world at seed 42: median lifespan essentially
+    # unchanged (1166 → 1157) and all four observed death modes retained. Rebalanced
+    # again once Stories 1.2 and 1.3 close the prevention/repair loop — until 1.3 exists
+    # nothing raises integrity, so degrade-and-recover cannot be tuned for here.
     "body": [
         {"type": "leg", "r": 1.5, "theta": 0.4, "phi": 0.0,
-         "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020},
         {"type": "leg", "r": 1.5, "theta": -0.4, "phi": 0.0,
-         "max_thrust": 1.5, "capacity": 4.0, "drain_max": 0.005},
+         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020},
     ],
 }
 

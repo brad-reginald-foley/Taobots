@@ -6,8 +6,9 @@ from abc import ABC, abstractmethod
 from common import ElementType
 
 # When a leg's water reserve is empty and thrust is nonzero, structural integrity
-# degrades by (shortfall * this scale) per tick. At drain_max=0.005 and scale=0.5,
-# a fully-starved leg loses integrity at 0.0025/tick → reaches 0 in ~400 ticks.
+# degrades by (shortfall * this scale) per tick. At the default drain_max=0.020 and
+# scale=0.5, a leg starved at cruise thrust loses integrity at 0.005/tick → reaches 0
+# in ~200 ticks; at full thrust, 0.010/tick → ~100 ticks.
 LEG_INTEGRITY_DEGRADE_SCALE: float = 0.5
 
 
