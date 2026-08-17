@@ -417,7 +417,8 @@ body_parts.py      BUILT     BodyPart base + LegPart only
 body_factory.py    BUILT     BodyFactory: body spec -> list[BodyPart], stable part IDs
 renderer.py        BUILT     Polar body rendering, organ graph
 taobot_simple.py   BUILT     Organ system lives here; rename to taobot.py deferred out of 1.0a
-chi.py             MISSING   ChiPool, destructive-cycle chemistry tick
+chi.py             BUILT     ChiPool + the AD-3 port; owns every conversion. Destructive-cycle
+                             chemistry still deferred — see Q4
 taobot.py          DEFERRED  Not a second class — taobot_simple.py becomes it by subtraction.
                              The rename was split out of E1 Story 1.0a at the spec token gate
                              and has no epic yet; see
@@ -440,7 +441,7 @@ chemistry, which is not how this is being built.
 
 | Epic | Design | Implementation | Integration | Testing |
 |---|---|---|---|---|
-| E1 Legs | Done | Done — thrust, `phi`, differential drive | Done — Water drain, workshop inspector | **Partial** — unit tests pass; no repair path (`LEG-6`) |
+| E1 Legs | Done | Done — thrust, `phi`, differential drive, Earth-funded repair (`LEG-6`) | Done — Water drain, deficit conversion, workshop inspector | Done — round trip verified, `logs/workshop_workshop_20260817T122719_143.csv` |
 | E2 Armor | — | — | — | — |
 | E3 Meridians | — | — | — | — |
 
@@ -468,6 +469,16 @@ are starting proposals, to be confirmed at the Phase 3 planning session.
    criterion. For E1 the organ half is sourced from **Earth (the body)** and the part half from the
    legs. Each later epic states which organ supplies its organ half. *(Decided 2026-08-11, architect
    pass; see Story 1.4 in `epic-e1-legs.md`.)*
+
+   **Satisfied for E1, 2026-08-17** — `logs/workshop_workshop_20260817T122719_143.csv`, 598 rows,
+   one run, both halves from different sources: `leg_1_integrity` **0.0000 → 0.8500** and
+   `organ_EARTH` **45.00 → 100.00**, with the bot alive throughout. The run tick-steps three
+   stages — starve Water so the legs degrade while Earth is untouched, then starve Earth so the
+   organ falls with repair below its floor, then feed both and let each recover from its own
+   restocked storage. Legs first because the Earth organ degrades at 1.0/tick against a leg's
+   ~0.005/tick, so starving both at once kills the bot on Earth before the legs have moved.
+   Regenerate with `python tools/verify_round_trip.py`; guarded by `tests/test_round_trip.py`.
+   Note `logs/` is gitignored, so the script rather than the file is the durable evidence.
 4. **Population stability** — 20 taobots run 10 minutes headless with population never below 15
    and no extinction (`<world>_<timestamp>.csv`).
 5. **Workshop completeness** — every organ and part built in E1–E3 is visible in the workshop
