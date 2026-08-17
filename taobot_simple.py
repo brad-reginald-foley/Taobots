@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from body_factory import BodyFactory
 from body_parts import BodyPart, LegPart
-from chi import ChiLaws, ChiPool, ConversionPath
+from chi import ChiLaws, ChiPool, ConversionPath, RepairLaws, default_repair_laws
 from common import ELEMENT_LIST, ElementType
 from math_utils import torus_direction, torus_distance, wrap_position
 from rng import derive_stream, new_seed
@@ -98,11 +98,16 @@ DEFAULT_PARAMS: dict = {
     # unchanged (1166 → 1157) and all four observed death modes retained. Rebalanced
     # again once Stories 1.2 and 1.3 close the prevention/repair loop — until 1.3 exists
     # nothing raises integrity, so degrade-and-recover cannot be tuned for here.
+    #
+    #   `mass` is stated in the spec rather than left to the factory default because
+    #   it is a *trait* (AD-13) and a body spec is the stand-in for a genome. Leg mass
+    #   is the reference 1.0; see `body_parts.DEFAULT_LEG_MASS` for the table it
+    #   normalises and why E1 cannot falsify the other rows.
     "body": [
         {"type": "leg", "r": 1.5, "theta": 0.4, "phi": 0.0,
-         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020},
+         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020, "mass": 1.0},
         {"type": "leg", "r": 1.5, "theta": -0.4, "phi": 0.0,
-         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020},
+         "max_thrust": 1.5, "capacity": 0.30, "drain_max": 0.020, "mass": 1.0},
     ],
 }
 
@@ -160,7 +165,7 @@ class TaobotSimple:
     no neural networks yet. Its essence lives in a `ChiPool` (`self.chi`), which owns
     every conversion — this class owns none.
 
-    Each tick: sense → decide → act → body parts → metabolize → chi.
+    Each tick: sense → decide → act → body parts → repair → metabolize → chi.
 
     Organ system (replaces single health value):
       Earth  — body structure; death condition at 0; damaged by Metal attacks
@@ -193,6 +198,7 @@ class TaobotSimple:
         rng: random.Random | None = None,
         run_seed: int | None = None,
         chi_laws: ChiLaws | None = None,
+        repair_laws: RepairLaws | None = None,
     ) -> None:
         """Create a taobot at (x, y) with the given entity_id.
 
@@ -208,10 +214,10 @@ class TaobotSimple:
         case a fresh run seed is generated and the stream is derived from it exactly as
         the world would. That is still a private stream, never a shared global.
 
-        `chi_laws` are the laws of Pangu this organism's chi tier obeys —
-        `World.spawn_taobot` passes the ones its config resolved. `None` falls back to
-        the shipped `configs/laws.json`, so a bot built without a world obeys the same
-        laws rather than a second copy of the numbers."""
+        `chi_laws` and `repair_laws` are the laws of Pangu this organism's chi tier and
+        structural repair obey — `World.spawn_taobot` passes the ones its config
+        resolved. `None` falls back to the shipped `configs/laws.json`, so a bot built
+        without a world obeys the same laws rather than a second copy of the numbers."""
         self.x = x
         self.y = y
         self.entity_id = entity_id
@@ -277,6 +283,13 @@ class TaobotSimple:
         # port without touching this class.
         self.chi: ChiPool = ChiPool(
             {e: 0.0 for e in ELEMENT_LIST}, storage_capacity, chi_laws
+        )
+
+        # The exchange rate and floor governing the chi -> part crossing. Held on the
+        # organism rather than on each part: the rate is a law shared by every part
+        # type, and `mass` — the per-part half of the cost — is what lives on the part.
+        self.repair_laws: RepairLaws = (
+            default_repair_laws() if repair_laws is None else repair_laws
         )
 
         # Collection state
@@ -371,6 +384,7 @@ class TaobotSimple:
         self._decide(nearby_resources, nearby_hazards, world)
         self._act(world)
         self._tick_body_parts()
+        self._repair_parts()
         self._metabolize()
         self.chi.convert()
         self.age_ticks += 1
@@ -547,6 +561,59 @@ class TaobotSimple:
             self.storage[part.element] -= absorbed
             part.tick()
 
+    def _repair_parts(self) -> None:
+        """Spend structural essence to raise part integrity — `STR-2`, the cure half.
+
+        Runs immediately after the parts have ticked, so damage taken this tick is
+        repairable this tick, and **before** `_metabolize`, which is where the epic's
+        task list puts it. That ordering is what makes `earth_repair_floor` load-
+        bearing rather than decorative: the body's own Earth drain is resolved after
+        this pass, so the floor is the only thing standing between a bot healing its
+        legs and a bot starving the one organ that can kill it.
+
+        Two loops, not one, and that is the whole point. Repairing each part as it is
+        visited would serve whichever part iterated first out of a pool the later ones
+        can no longer see — the split would be first-come, not pro-rata. So demand is
+        collected from every part, the pool splits the shortfall across all of them at
+        once (`AD-3`), and only then is each grant turned into integrity.
+
+        Grouped by *structural* element rather than assuming Earth: `STR-2` says every
+        part is made of Earth and today every part is, so this is one group — but the
+        grouping is what makes "pro-rata across every requester of an element" true by
+        construction instead of true by coincidence.
+
+        No demand means no request and no debit: a whole part asks for nothing, and a
+        bot whose parts are all whole never touches its Earth."""
+        rate = self.repair_laws.earth_per_integrity_mass
+        floor = self.repair_laws.earth_repair_floor
+        max_gain = self.repair_laws.max_integrity_per_tick
+
+        for part in self.body_parts:
+            part.clear_repair_record()
+
+        by_element: dict[ElementType, list[BodyPart]] = {}
+        for part in self.body_parts:
+            by_element.setdefault(part.structural_element, []).append(part)
+
+        for element, parts in by_element.items():
+            demands = [part.repair_demand(rate, max_gain) for part in parts]
+            if not any(d > 0.0 for d in demands):
+                continue
+            grants = self.chi.allocate(element, demands, reserve=floor)
+            for part, granted in zip(parts, grants):
+                part.apply_repair(granted, rate)
+
+    def repair_this_tick(self) -> tuple[float, float]:
+        """`(essence spent, integrity gained)` across every part, last tick.
+
+        Summed from the parts' own per-tick records rather than accumulated in a
+        counter here: observers read, they do not own the numbers, and one read path
+        means the CSV column, the inspector label and any test are looking at the same
+        thing the parts actually did."""
+        spent = sum(p.last_repair_essence for p in self.body_parts)
+        gained = sum(p.last_repair_gain for p in self.body_parts)
+        return spent, gained
+
     # --- Metabolize ---
 
     def _drain_organ(self, element: ElementType, drain: float) -> None:
@@ -649,6 +716,7 @@ class TaobotSimple:
         """Return a serialisable snapshot of all observable state.
 
         Used by the renderer inspector and the focal-individual logger."""
+        repair_spent, repair_gained = self.repair_this_tick()
         return {
             "entity_id": self.entity_id,
             "x": self.x,
@@ -680,6 +748,20 @@ class TaobotSimple:
                     ConversionPath.DEFICIT, ElementType.METAL, ElementType.WATER
                 ),
             },
+            # Last tick's structural repair — the chi -> part crossing. `spent` is the
+            # Earth that actually left storage and `gained` is the integrity that
+            # actually appeared; the law relating them is carried alongside so a
+            # reader (or a CSV) can check the crossing without knowing the config.
+            "repair": {
+                "earth_spent": repair_spent,
+                "integrity_gained": repair_gained,
+                "earth_per_integrity_mass": self.repair_laws.earth_per_integrity_mass,
+                "earth_floor": self.repair_laws.earth_repair_floor,
+                # "something wants repairing", which is what distinguishes a bot with
+                # nothing to heal from one that cannot afford to. Without it a panel
+                # showing no repair means both at once.
+                "damaged": any(p.integrity_deficit() > 0.0 for p in self.body_parts),
+            },
             "legs": [
                 {
                     "index": i,
@@ -690,6 +772,12 @@ class TaobotSimple:
                     "integrity": round(leg.structural_integrity, 3),
                     "thrust": round(leg._thrust, 4),
                     "max_thrust": leg.max_thrust,
+                    "mass": leg.mass(),
+                    # Per part, so the CSV can audit the crossing leg by leg rather
+                    # than only in aggregate — a whole-bot total cannot tell "one leg
+                    # repaired twice as much" from "both repaired evenly".
+                    "repair_earth": leg.last_repair_essence,
+                    "repair_gain": leg.last_repair_gain,
                 }
                 for i, leg in enumerate(self.legs)
             ],

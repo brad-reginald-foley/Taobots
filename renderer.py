@@ -677,6 +677,11 @@ class Renderer:
     # element colours so "this element is in deficit" never reads as "this element".
     _DEFICIT_COLOR = (240, 170, 40)
 
+    # Healing green for Earth being spent on structural repair, and for a leg gaining
+    # integrity. Distinct from both the element colours and the deficit amber: amber
+    # means "a pool is in trouble", green means "essence is crossing into structure".
+    _REPAIR_COLOR = (80, 220, 120)
+
     def _draw_organ_and_storage(
         self, state: dict, layout: panel_layout.PanelLayout
     ) -> None:
@@ -710,6 +715,15 @@ class Renderer:
             self._DEFICIT_COLOR if deficit else DIM_WHITE,
             bold=True,
         )
+        # Structural repair rides the Earth storage row for the same reason the Water
+        # deficit rides the Water row: the panel is at its vertical ceiling, the
+        # condensation ladder is what fits new content rather than new rows, and the
+        # Earth *is* what repair spends — the place a reader already looks. Nothing new
+        # is allotted, so no leg slot is spent and repair stays visible at every rung
+        # of the ladder, including the one that folds each leg onto a single line.
+        repair = state.get("repair", {})
+        repairing = float(repair.get("earth_spent", 0.0)) > 0.0
+
         for e in ELEMENT_LIST:
             val = state["storage"][e.name]
             cap = state["storage_capacity"][e.name]
@@ -718,6 +732,10 @@ class Renderer:
             if deficit and e is ElementType.WATER:
                 color = self._DEFICIT_COLOR
                 label = self._deficit_label(chi)
+            elif e is ElementType.EARTH:
+                label = self._earth_label(val, cap, repair)
+                if repairing:
+                    color = self._REPAIR_COLOR
             self._draw_compact_bar_row(
                 storage.next(panel_layout.RowKind.BAR), color, e.name, val, cap, label,
             )
@@ -740,6 +758,45 @@ class Renderer:
             return f"<{level:.2f} no Metal"
         return f"<{level:.2f} +{chi['deficit_metal_to_water'][1]:.3f}"
 
+    @staticmethod
+    def _earth_label(value: float, capacity: float, repair: dict) -> str:
+        """The Earth storage row's right-hand label.
+
+        Three states a reader has to be able to tell apart, because they look
+        identical in the bar alone:
+
+        - repair spent Earth this tick     -> the amount, as a debit
+        - a part is damaged and Earth is at or under the floor -> `FLOOR`, which is
+          the bot correctly refusing to heal itself to death, not a broken repair path
+        - nothing to repair                -> the plain `value/capacity`
+
+        The debit figure is what actually left storage, not what the parts asked for:
+        under a partial grant the two differ, and the number beside a falling bar has
+        to be the one the bar is falling by. Pure function so it can be asserted as a
+        string, exactly like `_deficit_label`."""
+        spent = float(repair.get("earth_spent", 0.0))
+        if spent > 0.0:
+            return f"{value:.1f} -{spent:.4f}"
+        floor = float(repair.get("earth_floor", 0.0))
+        if repair.get("damaged") and value <= floor:
+            return f"{value:.2f} FLOOR"
+        return f"{value:.1f}/{capacity:.0f}"
+
+    @staticmethod
+    def _integrity_label(leg: dict) -> str:
+        """A leg's integrity, plus what repair added to it this tick.
+
+        Four decimals on the gain against three on the integrity, deliberately: one
+        tick of repair moves ~1e-4, so at the integrity's own precision every gain
+        would print as `+0.000` and the row would say a leg was healing by nothing.
+        Widest form is `0.850 +0.0004`, which the bar row's right-aligned label fits
+        at the shipped panel width and truncates visibly if a narrower one ever
+        cannot. Pure function so it can be asserted as a string."""
+        gain = leg.get("repair_gain", 0.0)
+        if gain > 0.0:
+            return f"{leg['integrity']:.3f} +{gain:.4f}"
+        return f"{leg['integrity']:.3f}"
+
     def _draw_legs(self, state: dict, layout: panel_layout.PanelLayout) -> None:
         legs_section = layout.section("legs")
         if legs_section is None:
@@ -752,6 +809,7 @@ class Renderer:
         )
         for leg in state["legs"][: layout.legs_shown]:
             sign = "+" if leg["theta_deg"] >= 0 else ""
+            repairing = leg.get("repair_gain", 0.0) > 0.0
             if layout.leg_detail is panel_layout.LegDetail.LINE:
                 # Condensed to one row: integrity and reserve survive as numbers,
                 # which is what a degrade/recover round trip is read from.
@@ -771,7 +829,8 @@ class Renderer:
             )
             self._draw_compact_bar_row(
                 legs.next(panel_layout.RowKind.BAR),
-                _wc, "integr", leg["integrity"], 1.0, f"{leg['integrity']:.3f}",
+                self._REPAIR_COLOR if repairing else _wc,
+                "integr", leg["integrity"], 1.0, self._integrity_label(leg),
             )
             self._draw_compact_bar_row(
                 legs.next(panel_layout.RowKind.BAR),

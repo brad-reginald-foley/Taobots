@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -168,16 +169,160 @@ def default_chi_laws() -> ChiLaws:
     return ChiLaws.from_mapping(block)
 
 
+# ---------------------------------------------------------------------------
+# Structural repair: the chi -> part crossing
+# ---------------------------------------------------------------------------
+#
+# These live beside the chi laws rather than in `body_parts` because both are
+# statements about the *pool*: one is the exchange rate at which essence leaves the
+# chi tier, the other is how much of the pool repair is forbidden to touch. The part
+# is handed the rate as an argument and holds no laws of its own.
+
+# The value below which the exchange rate stops being a price at all.
+#
+# Not a tuning knob — the same shape of guard as `MAX_WATER_DEFICIT_THRESHOLD`, placed
+# where the workshop sweep (recorded in `configs/laws.json`) says the intervention
+# stops imposing anything. Repair cheap enough is repair that is free: leg integrity
+# never leaves 1.0, starvation has no lasting consequence, and the pressure the legs
+# organ system exists to impose is abolished by a config edit rather than by evolution.
+# `tools/derive_repair_laws.py rate` measures where that happens; the bound sits an
+# order of magnitude below the derived value so a deliberate retune has room and an
+# accidental zero does not.
+MIN_EARTH_PER_INTEGRITY_MASS: float = 1e-3
+
+
+@dataclass(frozen=True)
+class RepairLaws:
+    """The tunables of Earth-funded structural repair — laws of Pangu, not settings.
+
+    Both pass `AD-13`'s test in the affirmative. An evolvable exchange rate would be
+    driven to zero, which makes structural damage free and removes the consequence the
+    legs organ system exists to impose; an evolvable floor would be driven to zero too,
+    letting a lineage spend its last Earth healing its legs while the body — the one
+    death condition — starves. `mass`, by contrast, is a *trait*: it lives on the part.
+
+    **Direction of the law, stated once.** Earth debited is
+    `Δintegrity × mass × earth_per_integrity_mass` — a *multiplication*. The epic's
+    prose and its acceptance line disagreed on the direction; the constant's name is
+    the stronger signal ("Earth per unit of integrity×mass" means multiply), so that
+    is what is implemented, and the invariant harness asserts the same expression the
+    implementation uses so the two cannot drift apart.
+
+    **Integrity is a terminal sink.** Nothing converts integrity back into chi, so
+    there is no cycle for this rate to be exploited around and it is a pure balance
+    knob through E4. That stops holding at Phase 5, where a defeated taobot drops chi
+    a living one absorbs: if the drop derives from the corpse's mass and integrity then
+    Earth -> integrity -> corpse -> chi closes a loop and this rate acquires a second
+    job. Flagged for whoever designs combat.
+
+    Both were derived by sweeping them in workshop mode — see the reasoning recorded
+    beside them in `configs/laws.json` and `tools/derive_repair_laws.py`."""
+
+    earth_per_integrity_mass: float
+    earth_repair_floor: float
+    max_integrity_per_tick: float
+
+    def __post_init__(self) -> None:
+        # Finiteness first and explicitly, for the reason `ChiLaws` gives: NaN fails
+        # every ordered comparison, so a range check alone silently accepts it — and a
+        # NaN rate would make every repair demand NaN, which `min` propagates through
+        # the pro-rata split and no bound below would notice.
+        for name, value in (
+            ("earth_per_integrity_mass", self.earth_per_integrity_mass),
+            ("earth_repair_floor", self.earth_repair_floor),
+            ("max_integrity_per_tick", self.max_integrity_per_tick),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"repair.{name} must be a finite number, got {value!r}")
+
+        if self.earth_per_integrity_mass < MIN_EARTH_PER_INTEGRITY_MASS:
+            raise ValueError(
+                "repair.earth_per_integrity_mass is the Earth cost of one unit of "
+                f"integrity x mass and must be at least "
+                f"{MIN_EARTH_PER_INTEGRITY_MASS}, got "
+                f"{self.earth_per_integrity_mass!r} — see "
+                "MIN_EARTH_PER_INTEGRITY_MASS for why free repair is the failure this "
+                "bound exists to prevent"
+            )
+        # No upper bound, deliberately. An arbitrarily expensive rate makes repair
+        # unaffordable, which is the pre-1.3 world: parts decay one way. That is a
+        # worse simulation but not an *escape* — nothing is abolished, and the flow is
+        # already bounded by the Earth a bot can actually hold.
+        if self.earth_repair_floor < 0.0:
+            raise ValueError(
+                "repair.earth_repair_floor is an amount of Earth storage held back "
+                f"from repair and cannot be negative, got {self.earth_repair_floor!r}"
+            )
+        # Strictly positive: at zero a part can never regain anything, which is the
+        # pre-1.3 world with extra machinery. There is no upper bound — above 1.0 the
+        # cap simply stops binding and a part rebuilds in one tick, which is where this
+        # story started and why the law exists, but it abolishes nothing.
+        if self.max_integrity_per_tick <= 0.0:
+            raise ValueError(
+                "repair.max_integrity_per_tick is how much integrity one part may "
+                "regain in a single tick and must be positive — zero is a part that "
+                f"can never heal, got {self.max_integrity_per_tick!r}"
+            )
+
+    @classmethod
+    def from_mapping(cls, block: dict) -> "RepairLaws":
+        """Build from a parsed `repair` config block, naming a missing key loudly."""
+        try:
+            return cls(
+                earth_per_integrity_mass=float(block["earth_per_integrity_mass"]),
+                earth_repair_floor=float(block["earth_repair_floor"]),
+                max_integrity_per_tick=float(block["max_integrity_per_tick"]),
+            )
+        except KeyError as exc:
+            raise ValueError(f"repair config block missing required key: {exc}") from exc
+
+
+@lru_cache(maxsize=1)
+def default_repair_laws() -> RepairLaws:
+    """The shipped repair laws, read from `configs/laws.json`.
+
+    Resolved beside this module and cached for the life of the process, for the same
+    reasons `default_chi_laws` is: a bot built without a world lives in the same
+    universe as one the world spawned, and a run's laws must not shift underneath it."""
+    block = json.loads(LAWS_PATH.read_text())["repair"]
+    return RepairLaws.from_mapping(block)
+
+
+def pro_rata(demands: Sequence[float], supply: float) -> list[float]:
+    """Split `supply` across `demands` in proportion to each demand (`AD-3`).
+
+    Pure arithmetic, separated from the pool so the split can be asserted directly and
+    so `ChiPool.allocate` reads as "work out the shares, then withdraw them".
+
+    - Demand that fits is met in full; nobody is scaled down when there is enough.
+    - Under scarcity every requester receives `demand / total_demand * supply`, so a
+      requester asking for twice as much gets twice as much. Not equal shares: equal
+      shares would give a barely-scratched part the same Earth as a destroyed one.
+    - Non-positive demands take nothing and, importantly, contribute nothing to the
+      total — a whole part must not dilute the share of a damaged one.
+
+    The returned shares never sum above `supply`; `allocate` still meters them against
+    a running allowance, because summing float shares can land a hair either side."""
+    wanted = [d if d > 0.0 else 0.0 for d in demands]
+    total = sum(wanted)
+    if total <= 0.0 or supply <= 0.0:
+        return [0.0] * len(wanted)
+    if total <= supply:
+        return wanted
+    return [d / total * supply for d in wanted]
+
+
 class ChiPool:
     """One organism's pool of elemental essence, reached through a port.
 
-    **The port (`AD-3`).** Consumers call `request` and `deposit`; they do not mutate
-    the dict. Both return what was actually granted or accepted, which may be less
-    than asked for — *a denied request is a correct outcome*, not an error, and that
-    return shape is what leaves room for pro-rata allocation: when several requesters
-    compete for one element (Story 1.3 makes structural repair compete with conversion
-    for Earth), the split happens inside the pool and callers already handle a partial
-    grant. Nothing pro-rata is built here, because conversion is the only requester.
+    **The port (`AD-3`).** Consumers call `request`, `allocate` and `deposit`; they do
+    not mutate the dict. All three return what was actually granted or accepted, which
+    may be less than asked for — *a denied request is a correct outcome*, not an error.
+    `allocate` is the pro-rata split that return shape was left room for: Story 1.3
+    made structural repair a second requester of Earth, so several parts now compete
+    for one element in one tick and the pool is the only thing that can see all of
+    them. Note `_drain_organ` still writes storage directly and so does not yet
+    compete — the same deliberate partial migration described below.
 
     `convert` applies every transfer through that port, so it is the port's first real
     caller rather than a seam nothing uses. Note it cannot *plan* through the port: the
@@ -228,6 +373,43 @@ class ChiPool:
         if granted <= 0.0:
             return 0.0
         self.storage[element] = self.storage[element] - granted
+        return granted
+
+    def allocate(
+        self,
+        element: ElementType,
+        demands: Sequence[float],
+        *,
+        reserve: float = 0.0,
+    ) -> list[float]:
+        """Serve several requesters of one element at once. Returns what each got.
+
+        This is `AD-3`'s pro-rata allocation, and the reason the port returns grants
+        rather than raising: **a denied or partial grant is correct behaviour**, and
+        every caller already had to handle one.
+
+        The split is across *every requester of the element in this call*, not within
+        organ systems — structural repair makes a leg and (from E2) a plate of armor
+        compete for the same Earth in the same tick, and the pool is where that
+        competition has to be resolved because it is the only thing that can see all
+        of it. Callers therefore batch: one `allocate` per element per tick, never a
+        `request` per part in a loop, which would serve whoever iterated first.
+
+        `reserve` is Earth (or whatever element) this call may not touch — the floor
+        that keeps a bot from repairing its legs with the essence its body needs to
+        stay alive. It is a *reserve*, not a gate: below it nothing is granted, above
+        it only the excess is available, so a starving bot cannot heal and a bot that
+        just crossed the line cannot spend itself straight back under it.
+
+        Grants are metered against a running allowance rather than trusted to sum
+        correctly, so float error in the shares can never dip into the reserve."""
+        shares = pro_rata(demands, max(0.0, self.storage[element] - max(0.0, reserve)))
+        granted: list[float] = []
+        remaining = max(0.0, self.storage[element] - max(0.0, reserve))
+        for share in shares:
+            taken = self.request(element, min(share, remaining))
+            remaining -= taken
+            granted.append(taken)
         return granted
 
     def deposit(self, element: ElementType, amount: float) -> float:

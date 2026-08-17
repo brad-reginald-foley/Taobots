@@ -162,6 +162,22 @@ SCENARIOS: list[Scenario] = [
         hazards=0,
     ),
     Scenario(
+        # Story 1.3. Legs start badly damaged against a well-stocked Earth pool with
+        # resources present, so repair runs hard from tick one and the bot keeps
+        # earning the Earth to fund it — then walks itself back into Water starvation
+        # and damages them again. The cycling is the point: the part-integrity bound
+        # is trivially true at the cap, and this is the only scenario that holds a
+        # part *between* 0 and 1 for thousands of ticks while two mechanisms push it
+        # in opposite directions. `max_integrity_per_tick` is what makes that regime
+        # last long enough to be worth asserting over — without the cap a part is
+        # back at 1.0 the tick after it is funded.
+        name="repairing legs",
+        storage={"WOOD": 0.5, "WATER": 0.1, "METAL": 0.5, "FIRE": 0.5, "EARTH": 0.9},
+        leg_integrity=0.15,
+        resources=150,
+        hazards=0,
+    ),
+    Scenario(
         # Storage just below capacity, so every target's `room` is smaller than the
         # amount its source offers and all five transfers are capped. A correct cycle
         # derives `spent` from the capped `produced` and stays exact here; an inverted

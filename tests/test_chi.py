@@ -855,7 +855,9 @@ def test_the_trigger_keeps_legs_fed_where_the_passive_cycle_alone_cannot():
 # claim and the reorder can arrive as a silent accident instead of a decision.
 
 #: The phases `TaobotSimple.tick` runs, in the order it runs them.
-RECORDED_PHASE_ORDER = ("sense+decide", "act", "body parts", "upkeep", "chi", "age")
+RECORDED_PHASE_ORDER = (
+    "sense+decide", "act", "body parts", "repair", "upkeep", "chi", "age",
+)
 
 
 def _run_phases_by_hand(bot: TaobotSimple, world) -> None:
@@ -864,6 +866,11 @@ def _run_phases_by_hand(bot: TaobotSimple, world) -> None:
     bot._decide(resources, hazards, world)
     bot._act(world)
     bot._tick_body_parts()
+    # Story 1.3. Between the parts ticking and the body's own Earth drain, which is
+    # what makes `earth_repair_floor` load-bearing rather than decorative: move this
+    # after `_metabolize` and a bot can spend its last Earth on legs, then fail to
+    # fund the one organ that kills it.
+    bot._repair_parts()
     bot._metabolize()
     bot.chi.convert()
     bot.age_ticks += 1
@@ -896,6 +903,11 @@ def _seeded_pair(default_config):
         for element in ELEMENT_LIST:
             bot.storage[element] = bot.storage_capacity[element] * 0.4
         bot.storage[WATER] = 0.0
+        # And damaged legs against an Earth pool that can fund them, for the same
+        # reason one phase down: repair was added to the recorded order, and a pin on
+        # a bot whose parts are all whole would hold whether or not the tick runs it.
+        for part in bot.body_parts:
+            part.structural_integrity = 0.5
         pair.append((world, bot))
     return pair
 

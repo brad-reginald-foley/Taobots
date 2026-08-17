@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from body_parts import BodyPart, LegPart
+from body_parts import DEFAULT_LEG_MASS, BodyPart, LegPart
 from rng import derive_token
 
 
@@ -78,6 +78,11 @@ class BodyFactory:
                     max_thrust=float(spec["max_thrust"]),
                     capacity=float(spec["capacity"]),
                     drain_max=float(spec["drain_max"]),
+                    # Defaulted rather than required: `mass` is a trait a genome will
+                    # carry, and hand-written specs (tests, sandboxes) predate it.
+                    # The shipped body spec states it explicitly all the same, so the
+                    # value a run actually uses is visible where the other traits are.
+                    mass=float(spec.get("mass", DEFAULT_LEG_MASS)),
                 ))
             else:
                 raise ValueError(f"Unknown body part type: {part_type!r}")

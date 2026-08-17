@@ -260,6 +260,16 @@ class WorkshopLogger:
         "chi_deficit_active", "chi_deficit_served", "chi_deficit_level",
         "chi_passive_M2W_spent", "chi_passive_M2W_produced",
         "chi_deficit_M2W_spent", "chi_deficit_M2W_produced",
+        # Structural repair — the chi -> part crossing, whole-bot totals. `earth` is
+        # what actually left storage this tick and `gain` is the integrity that
+        # actually appeared; `rate` is the law relating them, logged per row so the
+        # crossing can be audited straight off the CSV
+        # (`earth == gain * mass * rate`, summed over the per-leg columns below)
+        # without the reader having to know which laws file the run used. `floor` is
+        # the Earth storage repair may not spend below — a row with Earth under it
+        # and a damaged leg is a bot correctly refusing to heal, not a missing repair.
+        "repair_earth_spent", "repair_integrity_gained",
+        "repair_rate", "repair_earth_floor",
     ]
 
     @staticmethod
@@ -272,10 +282,15 @@ class WorkshopLogger:
         from common import ELEMENT_LIST
         self._elements = ELEMENT_LIST
         self._n_legs = n_legs
+        # `repair_earth` / `repair_gain` are per leg, not only in the whole-bot total:
+        # under a partial grant the legs repair by different amounts, and a total
+        # cannot tell an even split from one leg taking everything.
         leg_cols = [
             f"leg_{i}_{field}"
             for i in range(n_legs)
-            for field in ("reserve", "integrity", "thrust")
+            for field in (
+                "reserve", "integrity", "thrust", "mass", "repair_earth", "repair_gain"
+            )
         ]
         columns = self._BASE_COLUMNS + leg_cols
         LOG_DIR.mkdir(exist_ok=True)
@@ -306,7 +321,8 @@ class WorkshopLogger:
         }
         # Read off the state snapshot the inspector reads, so the CSV and the panel
         # can never disagree about what the trigger did this tick.
-        chi = taobot.get_state()["chi"]
+        state = taobot.get_state()
+        chi = state["chi"]
         passive_spent, passive_produced = chi["passive_metal_to_water"]
         deficit_spent, deficit_produced = chi["deficit_metal_to_water"]
         row["chi_deficit_active"] = int(chi["deficit_active"])
@@ -316,14 +332,29 @@ class WorkshopLogger:
         row["chi_passive_M2W_produced"] = round(passive_produced, 6)
         row["chi_deficit_M2W_spent"] = round(deficit_spent, 6)
         row["chi_deficit_M2W_produced"] = round(deficit_produced, 6)
+        repair = state["repair"]
+        # Eight places, not the three or four the storage columns use: one tick of
+        # repair moves ~1e-4 Earth, and the crossing these columns exist to make
+        # auditable is an *equality* — rounded to three places both sides read 0.000
+        # and agree about nothing.
+        row["repair_earth_spent"] = round(repair["earth_spent"], 8)
+        row["repair_integrity_gained"] = round(repair["integrity_gained"], 8)
+        row["repair_rate"] = repair["earth_per_integrity_mass"]
+        row["repair_earth_floor"] = repair["earth_floor"]
         for e in self._elements:
             row[f"organ_{e.name}"] = round(taobot.organ(e), 3)
             row[f"storage_{e.name}"] = round(taobot.storage[e], 3)
             row[f"intake_{e.name}"] = round(taobot._interval_resources[e], 4)
+        # Read straight off the legs rather than off `state["legs"]`, which rounds
+        # integrity to three places for the panel. One tick of repair is ~1e-4, so a
+        # three-place column would show a leg standing still while it healed.
         for i, leg in enumerate(taobot.legs):
-            row[f"leg_{i}_reserve"]   = round(leg.reserve, 4)
-            row[f"leg_{i}_integrity"] = round(leg.structural_integrity, 4)
-            row[f"leg_{i}_thrust"]    = round(leg._thrust, 4)
+            row[f"leg_{i}_reserve"]      = round(leg.reserve, 4)
+            row[f"leg_{i}_integrity"]    = round(leg.structural_integrity, 6)
+            row[f"leg_{i}_thrust"]       = round(leg._thrust, 4)
+            row[f"leg_{i}_mass"]         = leg.mass()
+            row[f"leg_{i}_repair_earth"] = round(leg.last_repair_essence, 8)
+            row[f"leg_{i}_repair_gain"]  = round(leg.last_repair_gain, 8)
         self._writer.writerow(row)
         self._file.flush()
         taobot.reset_interval()
@@ -380,6 +411,17 @@ def config_fingerprint(config: WorldConfig) -> str:
         "chi": {
             "water_deficit_threshold": config.chi.water_deficit_threshold,
             "deficit_conversion_rate": config.chi.deficit_conversion_rate,
+        },
+        # Likewise read every tick: the repair laws set the price of structural
+        # integrity, so two runs at one seed under different rates are different runs.
+        "repair": {
+            "earth_per_integrity_mass": config.repair.earth_per_integrity_mass,
+            "earth_repair_floor": config.repair.earth_repair_floor,
+            # Omitting this one made two runs differing only in whether the per-tick
+            # cap binds fingerprint identically — and it is the law that decides
+            # whether damage is observable at all, so it is the last one a manifest
+            # can afford to be silent about.
+            "max_integrity_per_tick": config.repair.max_integrity_per_tick,
         },
     }
     canonical = json.dumps(resolved, sort_keys=True, separators=(",", ":"))

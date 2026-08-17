@@ -2,8 +2,9 @@
 title: 'Story 1.3 — Earth-consuming structural repair, legs first'
 type: 'feature'
 created: '2026-08-12'
-status: 'draft'
+status: 'done'
 review_loop_iteration: 0
+baseline_commit: '035ff481f318fd0055464ccdd916ee5b39c2aeb3'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
 ---
@@ -121,16 +122,16 @@ absorbing Earth essence" — currently "Partial — organs regen; parts do not".
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `body_parts.py` -- `BodyPart` gains a structural element alongside its function element (`AD-8`), and a `mass` stored placeholder read through a `mass()` accessor — never a bare field, so the later flip to derived changes one method per class.
-- [ ] `body_parts.py` -- degrade-and-repair on the **base class**: integrity recovers by absorbing Earth, capped at 1.0 and floored at 0.0. `LegPart` inherits it and adds nothing.
-- [ ] `chi.py` -- implement `AD-3` pro-rata allocation: when demand for an element exceeds supply, split by demand share across every requester. A partial grant is a correct outcome and must be reported as such.
-- [ ] `taobot_simple.py` -- a repair pass in the part-tick phase that requests Earth through the port for each damaged part and applies exactly the integrity the grant paid for.
-- [ ] `configs/laws.json` -- `EARTH_PER_INTEGRITY_MASS` and the Earth floor, **derived in the workshop** against legs with the sweep and reasoning recorded beside them, following the pattern the chi laws set.
-- [ ] `main.py` -- `WorkshopLogger` columns for Earth spent on repair and integrity gained, per part, so the crossing is auditable from the CSV.
-- [ ] `renderer.py` -- repair visible in the workshop inspector, using 1.0e's condensation ladder rather than assuming vertical room exists.
-- [ ] `tests/` -- cover the matrix: repair when funded, no repair below the floor, the 1.0 cap, already-whole, mass scaling the cost (two legs of different mass, same Δintegrity), pro-rata partial grant, and repair from exactly 0.0.
-- [ ] `tests/invariant_harness.py` -- a scenario cycling a bot through starvation and recovery, asserting the part-integrity bound holds across a long run rather than only at the cap.
-- [ ] `tests/invariant_harness.py` -- assert **the crossing balances**: per repairing part, Earth debited equals integrity gained converted by the law, measured on observed storage deltas, including under partial grant.
+- [x] `body_parts.py` -- `BodyPart` gains a structural element alongside its function element (`AD-8`), and a `mass` stored placeholder read through a `mass()` accessor — never a bare field, so the later flip to derived changes one method per class.
+- [x] `body_parts.py` -- degrade-and-repair on the **base class**: integrity recovers by absorbing Earth, capped at 1.0 and floored at 0.0. `LegPart` inherits it and adds nothing.
+- [x] `chi.py` -- implement `AD-3` pro-rata allocation: when demand for an element exceeds supply, split by demand share across every requester. A partial grant is a correct outcome and must be reported as such.
+- [x] `taobot_simple.py` -- a repair pass in the part-tick phase that requests Earth through the port for each damaged part and applies exactly the integrity the grant paid for.
+- [x] `configs/laws.json` -- `EARTH_PER_INTEGRITY_MASS` and the Earth floor, **derived in the workshop** against legs with the sweep and reasoning recorded beside them, following the pattern the chi laws set.
+- [x] `main.py` -- `WorkshopLogger` columns for Earth spent on repair and integrity gained, per part, so the crossing is auditable from the CSV.
+- [x] `renderer.py` -- repair visible in the workshop inspector, using 1.0e's condensation ladder rather than assuming vertical room exists.
+- [x] `tests/` -- cover the matrix: repair when funded, no repair below the floor, the 1.0 cap, already-whole, mass scaling the cost (two legs of different mass, same Δintegrity), pro-rata partial grant, and repair from exactly 0.0.
+- [x] `tests/invariant_harness.py` -- a scenario cycling a bot through starvation and recovery, asserting the part-integrity bound holds across a long run rather than only at the cap.
+- [x] `tests/invariant_harness.py` -- assert **the crossing balances**: per repairing part, Earth debited equals integrity gained converted by the law, measured on observed storage deltas, including under partial grant.
 
 **Acceptance Criteria:**
 - Given a damaged leg and Earth above the floor, when the tick runs, then integrity rises and Earth falls by the law's amount.
@@ -185,3 +186,41 @@ different second part type.
 
 **Manual checks:**
 - `python main.py --workshop` -- step to a tick where a leg is damaged and Earth is available: integrity climbs, Earth storage falls, and both are visible in the inspector and the workshop CSV.
+
+## Suggested Review Order
+
+**The mechanism, on the base class**
+
+- Entry point: repair demand, capped per tick. The cap is why damage is observable at all.
+  [`body_parts.py:116`](../../body_parts.py#L116)
+
+- `mass()` as a method from day one — a placeholder now, derived from part traits later.
+  [`body_parts.py:91`](../../body_parts.py#L91)
+
+- The single clamped write site for integrity; both directions go through it.
+  [`body_parts.py:103`](../../body_parts.py#L103)
+
+**The pass that joins the tiers**
+
+- Two loops, not one — demand is collected from every part before any of it is served,
+  which is what makes the split pro-rata rather than first-come.
+  [`taobot_simple.py:564`](../../taobot_simple.py#L564)
+
+- `AD-3` allocation. A denied or partial grant is correct behaviour.
+  [`chi.py:378`](../../chi.py#L378)
+
+**The laws**
+
+- Three constants, loosely derived by direction, each anchored to a stated quantity.
+  [`laws.json`](../../configs/laws.json)
+
+- Regenerates the checks behind them. A sanity check, not a search — and it says so.
+  [`derive_repair_laws.py`](../../tools/derive_repair_laws.py)
+
+**Tests — the crossing, and the caller**
+
+- The chi→part boundary the essence invariant is structurally blind to, asserted in both directions.
+  [`test_repair.py:200`](../../tests/test_repair.py#L200)
+
+- Repair reaching the tick loop at all. Deleting it from `tick()` was green until this existed.
+  [`test_repair.py:280`](../../tests/test_repair.py#L280)

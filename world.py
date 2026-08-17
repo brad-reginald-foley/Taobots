@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from chi import ChiLaws, default_chi_laws
+from chi import ChiLaws, RepairLaws, default_chi_laws, default_repair_laws
 from common import ELEMENT_LIST, ElementType
 from entities import Hazard, Resource
 from math_utils import torus_distance
@@ -170,6 +170,7 @@ class WorldConfig:
     # way tests and sandboxes do. A law is universal, so the shipped one is the right
     # default rather than a sentinel that would have to be checked everywhere.
     chi: ChiLaws = field(default_factory=default_chi_laws)
+    repair: RepairLaws = field(default_factory=default_repair_laws)
 
     @classmethod
     def from_json(cls, path: str | Path) -> "WorldConfig":
@@ -249,6 +250,14 @@ class WorldConfig:
                 ChiLaws.from_mapping(data["chi"])
                 if "chi" in data
                 else default_chi_laws()
+            ),
+            # Same fallback and the same reason as `chi`: the repair laws are read
+            # every tick, and a config naming no laws file must run under the shipped
+            # universal physics rather than a different one.
+            repair=(
+                RepairLaws.from_mapping(data["repair"])
+                if "repair" in data
+                else default_repair_laws()
             ),
         )
 
@@ -559,6 +568,7 @@ class World:
             rng=derive_stream(self.seed, "taobot", eid),
             run_seed=self.seed,
             chi_laws=self.config.chi,
+            repair_laws=self.config.repair,
         )
         self._taobots[eid] = t
         self._taobot_hash.register(eid, x, y)

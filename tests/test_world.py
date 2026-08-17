@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from chi import default_repair_laws
 from common import ElementType
 from world import SpatialHash, World, WorldConfig
 
@@ -313,16 +314,42 @@ def test_laws_resolve_beside_the_config_not_the_working_directory(tmp_path, monk
 
 
 def test_laws_tolerate_keys_the_loader_does_not_model(tmp_path):
-    """Forward compatibility: Story 1.3 adds the Earth-per-integrity rate to
-    `laws.json` and must not have to touch the loader to do it."""
+    """Forward compatibility: a laws file may carry a block, or a key inside a block,
+    that the loader knows nothing about, and loading must still succeed.
+
+    Written at Story 1.0c using `repair` as the stand-in, anticipating Story 1.3.
+    1.3 has since landed and `repair` *is* modelled — and modelled strictly, so a
+    partial block is now a loud error rather than a tolerated unknown. Updated to a
+    block that is genuinely unmodelled, which is what this test has always been about;
+    the strict-partial-block behaviour is covered separately."""
     _write(tmp_path / "laws.json", {
         "chemistry": {"degrade_rate": 0.001, "future_rate": 0.5},
-        "repair": {"earth_per_integrity": 4.0},
+        "future_subsystem": {"some_rate": 4.0},
         "_note": "laws are shared by all worlds",
     })
     p = _write(tmp_path / "w.json", _config_dict(laws="laws.json"))
 
-    assert WorldConfig.from_json(p).chemistry.degrade_rate == pytest.approx(0.001)
+    config = WorldConfig.from_json(p)
+    assert config.chemistry.degrade_rate == pytest.approx(0.001)
+    # The modelled blocks are unaffected by the unmodelled one sitting beside them.
+    assert config.repair == default_repair_laws()
+
+
+def test_a_partial_repair_block_is_an_error_not_a_tolerated_unknown(tmp_path):
+    """The other side of the test above, and the distinction that matters.
+
+    An *absent* `repair` block means "use the shipped universal physics" and falls back
+    to the defaults. A block that is *present but incomplete* is a typo or a half-finished
+    edit, and running silently under default physics while the author believes they set a
+    rate is the failure worth being loud about."""
+    _write(tmp_path / "laws.json", {
+        "chemistry": {"degrade_rate": 0.001},
+        "repair": {"earth_per_integrity_mass": 4.0},   # earth_repair_floor omitted
+    })
+    p = _write(tmp_path / "w.json", _config_dict(laws="laws.json"))
+
+    with pytest.raises(ValueError, match="earth_repair_floor"):
+        WorldConfig.from_json(p)
 
 
 @pytest.mark.parametrize("bad", ["/etc/passwd", "../laws.json", "sub/../../laws.json"])
