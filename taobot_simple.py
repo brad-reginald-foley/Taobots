@@ -307,6 +307,10 @@ class TaobotSimple:
         self._interval_resources: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
         self._interval_damage: float = 0.0
 
+        # What the last tick did to each pool, netted. Zero before the first tick, so a
+        # bot inspected at spawn reports no movement rather than a missing key.
+        self._storage_delta: dict[ElementType, float] = {e: 0.0 for e in ELEMENT_LIST}
+
     # --- Chi ---
 
     @property
@@ -380,6 +384,14 @@ class TaobotSimple:
         change behaviour above the deficit threshold, which Story 1.2's own acceptance
         forbids ("byte-identical to the pre-change build"); the narrower requirement
         wins and the restructure is deferred with its own baseline."""
+        # Snapshotted here and differenced at the end, so `storage_delta` is what this
+        # whole tick did to each pool — collection, leg draw, organ upkeep, repair and
+        # both conversion paths, netted. The organism accumulates its own deltas and
+        # observers read them (`AD-16`); a panel that computed this by remembering last
+        # frame would report frame-to-frame change, which is not the same thing when a
+        # renderer runs at a different rate from the simulation.
+        before = dict(self.storage)
+
         nearby_resources, nearby_hazards = self._sense(world)
         self._decide(nearby_resources, nearby_hazards, world)
         self._act(world)
@@ -388,6 +400,8 @@ class TaobotSimple:
         self._metabolize()
         self.chi.convert()
         self.age_ticks += 1
+
+        self._storage_delta = {e: self.storage[e] - before[e] for e in ELEMENT_LIST}
 
     # --- Sense ---
 
@@ -725,6 +739,14 @@ class TaobotSimple:
             "behavior_state": self.behavior_state,
             "storage": {e.name: self.storage[e] for e in ELEMENT_LIST},
             "storage_capacity": {e.name: self.storage_capacity[e] for e in ELEMENT_LIST},
+            # Net movement in each pool over the last tick, so a reader can see storage
+            # *fluctuating* rather than having to infer flow from a slow-moving level.
+            "storage_delta": {e.name: self._storage_delta[e] for e in ELEMENT_LIST},
+            # Which organ rows are derived summary statistics rather than stored pools
+            # (`AD-5`). A derived organ is a gauge, not a tank: nothing can draw from it,
+            # and a reader who mistakes it for fuel will look in the wrong place for the
+            # source of a part's supply. The panel marks them for exactly that reason.
+            "derived_organs": sorted(e.name for e in DERIVED_ORGANS),
             "fitness_score": self.fitness_score,
             "age_ticks": self.age_ticks,
             "heading": self.heading,

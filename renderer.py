@@ -692,11 +692,13 @@ class Renderer:
         self._blit_row_text(
             organs.next(panel_layout.RowKind.HEADING), "Organs (aggregate)", bold=True
         )
+        derived = set(state.get("derived_organs", ()))
         for e in ELEMENT_LIST:
             val = state["organs"][e.name]
             self._draw_compact_bar_row(
                 organs.next(panel_layout.RowKind.BAR),
-                ELEMENT_COLOR[e], e.name, val, 100.0, f"{val:.1f}",
+                ELEMENT_COLOR[e], e.name, val, 100.0,
+                self._organ_label(val, e.name in derived),
             )
 
         # The Water-deficit trigger is shown inside the Storage section rather than in a
@@ -724,11 +726,12 @@ class Renderer:
         repair = state.get("repair", {})
         repairing = float(repair.get("earth_spent", 0.0)) > 0.0
 
+        deltas = state.get("storage_delta", {})
         for e in ELEMENT_LIST:
             val = state["storage"][e.name]
             cap = state["storage_capacity"][e.name]
             color = ELEMENT_COLOR[e]
-            label = f"{val:.1f}/{cap:.0f}"
+            label = self._storage_label(val, cap, deltas.get(e.name, 0.0))
             if deficit and e is ElementType.WATER:
                 color = self._DEFICIT_COLOR
                 label = self._deficit_label(chi)
@@ -739,6 +742,46 @@ class Renderer:
             self._draw_compact_bar_row(
                 storage.next(panel_layout.RowKind.BAR), color, e.name, val, cap, label,
             )
+
+    @staticmethod
+    def _organ_label(value: float, is_derived: bool) -> str:
+        """The right-hand label for an organ row, marking a derived organ as such.
+
+        A derived organ is a **gauge, not a tank** (`AD-5`): it is the mean integrity of
+        that element's parts, nothing can draw from it, and it does not fall when the
+        parts consume their fuel. A reader who takes it for a reservoir looks in the
+        wrong row for a part's supply — which is exactly what happened when the Water
+        organ sat at 100 while `storage_WATER` quietly drained from 9.9 to 8.9.
+
+        The stored organs get a bare number, so the marked ones read as the exception.
+        Pure function so it can be asserted as a string, like `_deficit_label`."""
+        return f"{value:.1f}=parts" if is_derived else f"{value:.1f}"
+
+    @staticmethod
+    def _storage_label(value: float, capacity: float, delta: float) -> str:
+        """The right-hand label for a storage row: the level, and the last tick's change.
+
+        The level alone moves too slowly to read. Two legs at cruise draw about
+        0.012/tick out of a pool of twenty, so a bar barely stirs and the digits change
+        every few seconds — a pool visibly draining looks static, and the flow has to be
+        inferred rather than seen. The delta is the *netted* movement over the whole
+        tick: collection, leg draw, organ upkeep, repair and both conversion paths.
+
+        Rendered without a leading zero (`-.03`) to stay narrow, and suppressed entirely
+        when nothing moved, so a still pool is visibly still rather than reading `+.00`."""
+        level = f"{value:.1f}/{capacity:.0f}"
+        # Suppressed below what two decimals can show, rather than below some smaller
+        # epsilon: a delta of 0.0006 renders as "+.00", which reads as "nothing moved"
+        # while claiming otherwise. Anything displayed is movement the reader can see.
+        if abs(delta) < 0.005:
+            return level
+        moved = f"{delta:+.2f}"
+        # Drop the leading zero on the *delta only* — "+0.03" -> "+.03". Doing this by
+        # replacing "0." across the whole label rewrote the level too, turning a pool of
+        # 20.0 into 2.0: a narrower label is not worth misreporting the number it labels.
+        if moved[1] == "0" and moved[2:3] == ".":
+            moved = moved[0] + moved[2:]
+        return f"{level} {moved}"
 
     @staticmethod
     def _deficit_label(chi: dict) -> str:

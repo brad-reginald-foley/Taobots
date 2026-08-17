@@ -744,3 +744,63 @@ def test_a_bot_state_without_a_chi_block_still_draws(surface) -> None:
     for row in _storage_rows(layout):
         if row.kind in INKED_KINDS:
             assert _painted(surface, row.rect)
+
+
+# --- gauge vs tank, and visible movement ------------------------------------
+#
+# Both exist because a real session went looking for a leg's fuel in the Organs
+# WATER row — a derived gauge pinned at 100 — while storage_WATER quietly drained
+# from 9.9 to 8.9 one section below. Two rows, same name, opposite meanings.
+
+
+def test_a_derived_organ_is_marked_and_a_stored_one_is_not():
+    """`AD-5`: a derived organ is the mean integrity of its parts. Nothing can draw
+    from it, so a reader must be able to tell it from a pool at a glance."""
+    assert Renderer._organ_label(100.0, True) == "100.0=parts"
+    assert Renderer._organ_label(93.4, False) == "93.4"
+
+
+def test_the_storage_label_shows_the_last_tick_s_movement():
+    """The level alone moves too slowly to read — two legs at cruise draw ~0.012/tick
+    out of twenty — so a draining pool looks static."""
+    assert Renderer._storage_label(9.9, 20, -0.026) == "9.9/20 -.03"
+    assert Renderer._storage_label(10.0, 40, -1.25) == "10.0/40 -1.25"
+
+
+def test_a_still_pool_reads_as_still():
+    """Suppressed below what two decimals can show, so nothing ever renders `+.00` —
+    which would read as "nothing moved" while claiming movement."""
+    assert Renderer._storage_label(9.9, 20, 0.0) == "9.9/20"
+    assert Renderer._storage_label(9.9, 20, 0.0006) == "9.9/20"
+
+
+def test_stripping_the_delta_s_leading_zero_never_touches_the_level():
+    """Doing this with a blanket `.replace("0.", ".")` rewrote the level too, turning a
+    pool of 20.0 into 2.0. A narrower label is not worth misreporting the number."""
+    assert Renderer._storage_label(20.0, 20, 2.0) == "20.0/20 +2.00"
+    assert Renderer._storage_label(0.0, 20, -0.5) == "0.0/20 -.50"
+    assert Renderer._storage_label(20.0, 20, 0.008) == "20.0/20 +.01"
+
+
+def test_the_organism_reports_what_the_whole_tick_did_to_each_pool(default_config):
+    """`AD-16`: the organism accumulates its own deltas and observers read them. A panel
+    that differenced successive frames would report frame-to-frame change, which is not
+    the same thing when the renderer and the simulation run at different rates."""
+    from common import ELEMENT_LIST, ElementType
+    from world import World
+
+    world = World(default_config, seed=20260817)
+    world.initialize()
+    bot = world.spawn_taobot(x=40.0, y=30.0)
+    for element in ELEMENT_LIST:
+        bot.storage[element] = bot.storage_capacity[element] * 0.5
+
+    assert bot.get_state()["storage_delta"][ElementType.WATER.name] == 0.0  # before any tick
+
+    before = dict(bot.storage)
+    world.tick()
+    delta = bot.get_state()["storage_delta"]
+
+    for element in ELEMENT_LIST:
+        assert delta[element.name] == pytest.approx(bot.storage[element] - before[element])
+    assert delta[ElementType.WATER.name] < 0.0, "a thrusting bot must be spending Water"
