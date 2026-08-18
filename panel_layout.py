@@ -222,6 +222,20 @@ class _Profile:
 _NORMAL = Metrics(line_h=16, sep_h=7, pad_h=3)
 _TIGHT = Metrics(line_h=14, sep_h=5, pad_h=0)
 
+
+def _at_least(m: "Metrics", min_line_h: int) -> "Metrics":
+    """`m`, with its row height raised to fit a font this tall.
+
+    These heights were chosen against the faces `SysFont("monospace", 13/15)` resolves
+    to on a developer machine, where a 13px request really is 13px tall. On the Linux
+    CI runner the same request returns a face with a linesize of **16**, so the tight
+    rung's 14px rows overlapped by two pixels and each row's glyphs bled into the one
+    above. Rects that do not overlap do not imply glyphs that do not overlap — the
+    renderer measures the face it actually got and the layout widens to fit it."""
+    if min_line_h <= m.line_h:
+        return m
+    return Metrics(line_h=min_line_h, sep_h=m.sep_h, pad_h=m.pad_h)
+
 # The declared condensation rule, applied in order until the content fits the
 # inspector rect. Each rung gives up strictly less than the one after it:
 #   1. everything
@@ -479,12 +493,13 @@ def _content_h(
     with_notice: bool,
     organ_rows: int,
     storage_rows: int,
+    min_line_h: int = 0,
 ) -> int:
     """Height the inspector content would occupy under `profile`.
 
     Kept in lockstep with the builder below by
     `test_predicted_height_matches_the_built_layout`."""
-    m = profile.metrics
+    m = _at_least(profile.metrics, min_line_h)
     h = m.line_h + m.sep_h                              # title + separator
     if variant is Variant.WORKSHOP:
         h += m.line_h                                   # tick / controls row
@@ -512,6 +527,7 @@ def _choose(
     legs_total: int,
     organ_rows: int,
     storage_rows: int,
+    min_line_h: int = 0,
 ) -> tuple[_Profile, int, bool]:
     """Walk the condensation ladder.
 
@@ -528,13 +544,14 @@ def _choose(
                 with_notice=False,
                 organ_rows=organ_rows,
                 storage_rows=storage_rows,
+            min_line_h=min_line_h,
             )
             <= avail_h
         ):
             return profile, legs_total, False
 
     profile = _LADDER[-1]
-    m = profile.metrics
+    m = _at_least(profile.metrics, min_line_h)
     # The notice is reserved before a single leg is placed, so the one guard
     # against silent clipping can never itself be the row that does not fit.
     base = _content_h(
@@ -546,6 +563,7 @@ def _choose(
         with_notice=True,
         organ_rows=organ_rows,
         storage_rows=storage_rows,
+            min_line_h=min_line_h,
     )
     per_leg = _LEG_ROW_COUNT[profile.leg_detail] * m.line_h
     shown = 0 if per_leg <= 0 else max(0, (avail_h - base) // per_leg)
@@ -566,6 +584,7 @@ def compute(
     has_bot: bool = True,
     organ_rows: int = ORGAN_ROWS,
     storage_rows: int = STORAGE_ROWS,
+    min_line_h: int = 0,
 ) -> PanelLayout:
     """Lay the whole panel out from its geometry and the bot's part inventory.
 
@@ -619,8 +638,9 @@ def compute(
         legs_total=legs_total,
         organ_rows=organ_rows,
         storage_rows=storage_rows,
+        min_line_h=min_line_h,
     )
-    m = profile.metrics
+    m = _at_least(profile.metrics, min_line_h)
 
     # The notice slot is carved out of the build area up front, so no section can
     # consume it and leave the panel unable to admit what it dropped.

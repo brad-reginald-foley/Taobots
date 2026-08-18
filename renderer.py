@@ -148,12 +148,22 @@ class Renderer:
         self._measure_bold = lambda text: self._font_bold.size(text)[0]
         self._measure_bold_sm = lambda text: self._font_bold_sm.size(text)[0]
 
+        # The tallest face the panel puts in an ordinary row. `SysFont("monospace", 13)`
+        # is 13px tall on a developer machine and **16px** on the Linux CI runner, so a
+        # 14px row overlapped by two pixels there and every row's glyphs bled into the
+        # one above. The layout widens its rows to this rather than trusting the request.
+        self._line_h = max(
+            self._font_sm.get_linesize(), self._font_bold_sm.get_linesize()
+        )
+
         self._panel_rect = pygame.Rect(window_w, 0, panel_w, window_h)
 
         # Panel chrome (graph, pause button, slider) is independent of which bot
         # is selected, so one layout computed here serves the hit-test properties
         # that main.py calls outside a frame.
-        self._chrome = panel_layout.compute(window_w, panel_w, window_h, 0)
+        self._chrome = panel_layout.compute(
+            window_w, panel_w, window_h, 0, min_line_h=self._line_h
+        )
 
         # Rolling Earth-organ history: (mean, min, max) per tick
         self._organ_history: collections.deque[tuple[float, float, float]] = (
@@ -242,6 +252,7 @@ class Renderer:
             has_bot=taobot is not None,
             organ_rows=len(ELEMENT_LIST),
             storage_rows=len(ELEMENT_LIST),
+            min_line_h=self._line_h,
         )
 
     def _heading_font(self, line_h: int) -> tuple[pygame.font.Font, int]:
