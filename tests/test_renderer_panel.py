@@ -260,14 +260,9 @@ def test_leg_reserve_label_is_painted_whole_and_flush_right(surface, legs: int) 
 
         from common import DIM_WHITE
 
-        expected = pygame.Surface((geom.label_right - geom.label_x, row.h))
-        expected.fill(PANEL_COLOR)
-        expected.blit(renderer._font_sm.render(label, True, DIM_WHITE), (0, 0))
-        actual = surface.subsurface(
-            pygame.Rect(geom.label_x, row.y, expected.get_width(), row.h)
-        )
-        assert pygame.image.tostring(actual, "RGB") == pygame.image.tostring(expected, "RGB"), (
-            "the reserve label is not painted whole at its right-aligned position"
+        _assert_text_painted(
+            surface, renderer, geom.label_x, row.y, geom.label_w, row.h, label,
+            "the reserve label is not painted whole at its right-aligned position",
         )
 
         rightmost = _rightmost_painted_x(surface, row)
@@ -614,6 +609,49 @@ def _colors(surface, rect: panel_layout.Rect) -> set[tuple[int, int, int]]:
     }
 
 
+def _ink(surface, rect, background=PANEL_COLOR) -> set:
+    """Coordinates inside `rect` that are not the panel background, relative to it.
+
+    Compared instead of raw RGB because exact byte equality asks a question the test
+    does not mean. Both sides render with the *same* font object in the same process,
+    so the glyph shapes are identical by construction — what the test is actually
+    asserting is that the label is painted **whole, and in the right place**. Blended
+    edge pixels depend on surface depth and antialiasing, which differ by platform:
+    on the Linux CI runner byte comparison failed while the text was correct and
+    correctly positioned."""
+    import pygame
+
+    return {
+        (x - rect.x, y - rect.y)
+        for y in range(rect.y, rect.y + rect.h)
+        for x in range(rect.x, rect.x + rect.w)
+        if surface.get_at((x, y))[:3] != background
+    }
+
+
+def _assert_text_painted(surface, renderer, x: int, y: int, w: int, h: int, label: str, what: str):
+    """`label` is painted at (x, y) within a w x h box, ink for ink."""
+    import pygame
+
+    reference = pygame.Surface((w, h))
+    reference.fill(PANEL_COLOR)
+    reference.blit(renderer._font_sm.render(label, True, DIM_WHITE), (0, 0))
+
+    want = _ink(reference, pygame.Rect(0, 0, w, h))
+    got = _ink(surface, pygame.Rect(x, y, w, h))
+    if want == got:
+        return
+    font = renderer._font_sm
+    missing, extra = sorted(want - got)[:6], sorted(got - want)[:6]
+    raise AssertionError(
+        f"{what}: expected {label!r} at x={x}, y={y} in {w}x{h}\n"
+        f"  ink pixels: expected {len(want)}, painted {len(got)}\n"
+        f"  missing (first few): {missing}\n"
+        f"  unexpected (first few): {extra}\n"
+        f"  font: linesize={font.get_linesize()} size({label!r})={font.size(label)} "
+        f"advance('M')={font.size('M')} row_h={h}"
+    )
+
 def _assert_label_painted(surface, renderer: Renderer, row: panel_layout.Rect, label: str):
     """The row's right-hand label must be exactly `label`, on the pixels.
 
@@ -626,14 +664,9 @@ def _assert_label_painted(surface, renderer: Renderer, row: panel_layout.Rect, l
     )
     assert geom.label == label, f"the label was truncated to {geom.label!r}"
 
-    expected = pygame.Surface((geom.label_right - geom.label_x, row.h))
-    expected.fill(PANEL_COLOR)
-    expected.blit(renderer._font_sm.render(label, True, DIM_WHITE), (0, 0))
-    actual = surface.subsurface(
-        pygame.Rect(geom.label_x, row.y, expected.get_width(), row.h)
-    )
-    assert pygame.image.tostring(actual, "RGB") == pygame.image.tostring(expected, "RGB"), (
-        f"the Water row does not read {label!r}"
+    _assert_text_painted(
+        surface, renderer, geom.label_x, row.y, geom.label_w, row.h, label,
+        "the Water row",
     )
 
 
