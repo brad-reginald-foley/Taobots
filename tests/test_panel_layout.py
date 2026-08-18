@@ -524,3 +524,49 @@ def test_containment_is_not_vacuously_true_for_empty_rects() -> None:
     assert not a.contains(Rect(2, 2, 0, 0))
     assert not Rect(0, 0, 0, 0).contains(Rect(0, 0, 0, 0))
     assert Rect(0, 0, 0, 5).is_degenerate
+
+
+# --- proportional faces ------------------------------------------------------
+#
+# `SysFont("monospace")` is not guaranteed to resolve to a fixed-pitch face. It does on
+# macOS and did not on the Linux CI runner, where it fell back to the bundled default —
+# so every right-aligned label was placed by an advance width the glyphs did not have,
+# and five pixel tests failed there while passing locally. These pin the measured path.
+
+
+def _proportional(text: str) -> int:
+    """A deliberately non-uniform measurer: 'i' is narrow, 'M' is wide."""
+    return sum(3 if ch in "il.:" else 11 for ch in text)
+
+
+def test_bar_row_places_the_label_by_measured_width_not_by_character_count():
+    row = panel_layout.Rect(0, 0, 240, 14)
+    label = "il.:MM"                      # 4 narrow + 2 wide: nothing like len * char_w
+    geom = panel_layout.bar_row(row, "WATER", label, char_w=8, measure=_proportional)
+
+    assert geom.label == label, "a label that fits must not be truncated"
+    assert geom.label_w == _proportional(label)
+    assert geom.label_right == row.right, "the label must end flush with the row"
+    assert geom.label_x == row.right - _proportional(label)
+    # The character-count guess would have placed it here, and it is not the same place.
+    assert geom.label_x != row.right - len(label) * 8
+
+
+def test_the_geometry_agrees_with_itself_under_a_proportional_face():
+    """`label_right` derived from `len(label) * char_w` while `label_x` came from a
+    measured width made the rect wider than the text — enough to run off the surface."""
+    row = panel_layout.Rect(0, 0, 240, 14)
+    geom = panel_layout.bar_row(row, "WATER", "iiii", char_w=8, measure=_proportional)
+    assert geom.label_right - geom.label_x == geom.label_w == _proportional("iiii")
+
+
+def test_clip_text_fits_a_proportional_face_exactly():
+    """Trimmed a character at a time, because with a proportional face there is no
+    divisor to compute a character budget from."""
+    wide = "MMMMMMMMMM"                   # 110px by the measurer above
+    assert panel_layout.clip_text(wide, 110, char_w=8, measure=_proportional) == wide
+    cut = panel_layout.clip_text(wide, 50, char_w=8, measure=_proportional)
+    assert cut.endswith(">"), "a cut label must say it was cut"
+    assert _proportional(cut) <= 50
+    # And the assumed path still works when no measurer is supplied.
+    assert panel_layout.clip_text(wide, 40, char_w=8).endswith(">")

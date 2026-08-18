@@ -21,6 +21,7 @@ that vanishes without saying so is worse than content that does not fit.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -323,19 +324,42 @@ class PanelLayout:
 # --- Text and bar-row fitting ----------------------------------------------
 
 
-def clip_text(text: str, max_w: int, char_w: int = CHAR_W) -> str:
-    """Shorten `text` to fit `max_w` pixels in a monospace face of `char_w`.
+#: How wide a string is, in pixels. Injected so this module can be exact about text
+#: without importing pygame: purity here means no side effects and no display, not
+#: refusing inputs. `SysFont("monospace")` is **not** guaranteed to resolve to a
+#: fixed-pitch face — it does on macOS and did not on the Linux CI runner, where
+#: `len(text) * char_w` mispredicted every label width and the panel painted its
+#: right-aligned labels somewhere the tests did not expect.
+Measure = Callable[[str], int]
+
+
+def _width(text: str, char_w: int, measure: "Measure | None") -> int:
+    """Pixel width of `text`: measured when a measurer is supplied, else assumed."""
+    return measure(text) if measure is not None else len(text) * char_w
+
+
+def clip_text(
+    text: str, max_w: int, char_w: int = CHAR_W, measure: "Measure | None" = None
+) -> str:
+    """Shorten `text` to fit `max_w` pixels.
+
+    Pass `measure` — typically `font.size` composed to return a width — and the fit is
+    exact for any face. Without it the old fixed-advance assumption applies, which is
+    correct only while the font really is monospace.
 
     A shortened string ends in '>' so the reader can see it was cut rather than
     mistaking the fragment for the whole value."""
-    if char_w <= 0 or max_w <= 0:
+    if max_w <= 0 or (measure is None and char_w <= 0):
         return ""
-    max_chars = max_w // char_w
-    if len(text) <= max_chars:
+    if _width(text, char_w, measure) <= max_w:
         return text
-    if max_chars <= 1:
-        return text[:max_chars]
-    return text[: max_chars - 1] + ">"
+    # Trim a character at a time, leaving room for the marker. Character-wise rather
+    # than by arithmetic because with a proportional face there is no divisor to use.
+    for cut in range(len(text) - 1, 0, -1):
+        candidate = text[:cut] + ">"
+        if _width(candidate, char_w, measure) <= max_w:
+            return candidate
+    return ""
 
 
 @dataclass(frozen=True)
@@ -349,11 +373,15 @@ class BarRowGeometry:
     bar: Rect
     label: str
     label_x: int
+    #: The label's real pixel width, carried rather than recomputed. Deriving it from
+    #: `len(label) * char_w` here while `label_x` was placed from a *measured* width
+    #: made the geometry disagree with itself on any face that is not fixed-pitch.
+    label_w: int
     char_w: int = CHAR_W
 
     @property
     def label_right(self) -> int:
-        return self.label_x + len(self.label) * self.char_w
+        return self.label_x + self.label_w
 
     @property
     def truncated(self) -> bool:
@@ -366,6 +394,7 @@ def bar_row(
     label: str,
     char_w: int = CHAR_W,
     name_chars: int = NAME_CHARS,
+    measure: "Measure | None" = None,
 ) -> BarRowGeometry:
     """Lay out a compact bar row so its right-hand label ends at the row's right edge.
 
@@ -380,9 +409,9 @@ def bar_row(
     name_x = row.x + NAME_X
     name_text = f"{name[:name_chars]:<{name_chars}}"
 
-    bar_x = max(row.x + BAR_X, name_x + name_chars * char_w + NAME_GAP)
-    label_text = clip_text(label, max(0, row.right - bar_x - LABEL_GAP), char_w)
-    label_w = len(label_text) * char_w
+    bar_x = max(row.x + BAR_X, name_x + _width(name_text, char_w, measure) + NAME_GAP)
+    label_text = clip_text(label, max(0, row.right - bar_x - LABEL_GAP), char_w, measure)
+    label_w = _width(label_text, char_w, measure)
     label_x = row.right - label_w
     bar_w = max(0, min(BAR_MAX_W, label_x - LABEL_GAP - bar_x))
     bar = Rect(bar_x, row.y + ROW_INSET_Y, bar_w, SWATCH_H)
@@ -395,6 +424,7 @@ def bar_row(
         bar=bar,
         label=label_text,
         label_x=label_x,
+        label_w=label_w,
         char_w=char_w,
     )
 

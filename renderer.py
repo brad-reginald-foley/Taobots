@@ -138,6 +138,16 @@ class Renderer:
         self._char_w_bold = max(1, self._font_bold.size("M")[0])
         self._char_w_bold_sm = max(1, self._font_bold_sm.size("M")[0])
 
+        # ...and measured *per string*, not per character, because
+        # `SysFont("monospace")` is not guaranteed to resolve to a fixed-pitch face.
+        # It does on macOS; on the Linux CI runner it fell back to a proportional
+        # default, so every right-aligned label was placed by an advance width the
+        # glyphs did not have and the panel painted them a few pixels off. Handing the
+        # layout a real measurer keeps it exact on any face without it importing pygame.
+        self._measure_sm = lambda text: self._font_sm.size(text)[0]
+        self._measure_bold = lambda text: self._font_bold.size(text)[0]
+        self._measure_bold_sm = lambda text: self._font_bold_sm.size(text)[0]
+
         self._panel_rect = pygame.Rect(window_w, 0, panel_w, window_h)
 
         # Panel chrome (graph, pause button, slider) is independent of which bot
@@ -252,9 +262,11 @@ class Renderer:
             return
         if bold:
             font, char_w = self._heading_font(rect.h)
+            measure = self._measure_bold if font is self._font_bold else self._measure_bold_sm
         else:
             font, char_w = self._font_sm, self._char_w_sm
-        text = panel_layout.clip_text(msg, rect.w, char_w)
+            measure = self._measure_sm
+        text = panel_layout.clip_text(msg, rect.w, char_w, measure)
         if not text:
             return
         self._screen.blit(font.render(text, True, color), (rect.x, rect.y))
@@ -566,7 +578,9 @@ class Renderer:
         run past the panel edge the way a fixed offset did."""
         if row is None:
             return
-        g = panel_layout.bar_row(row, name, right_label, char_w=self._char_w_sm)
+        g = panel_layout.bar_row(
+            row, name, right_label, char_w=self._char_w_sm, measure=self._measure_sm
+        )
         s = self._screen
         pygame.draw.rect(s, color, pygame.Rect(*g.swatch.as_tuple()))
         s.blit(self._font_sm.render(g.name, True, DIM_WHITE), (g.name_x, row.y))

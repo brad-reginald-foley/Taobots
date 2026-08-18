@@ -252,7 +252,9 @@ def test_leg_reserve_label_is_painted_whole_and_flush_right(surface, legs: int) 
     label = "3.951/10.0"
     for reserve_row in bar_rows[1::2]:          # second bar of each leg is reserve
         row = reserve_row.rect
-        geom = panel_layout.bar_row(row, "resv", label, char_w=renderer._char_w_sm)
+        geom = panel_layout.bar_row(
+            row, "resv", label, char_w=renderer._char_w_sm, measure=renderer._measure_sm
+        )
         assert geom.label == label, "the label was truncated to fit"
         assert geom.label_right <= PANEL_RIGHT
 
@@ -619,7 +621,9 @@ def _assert_label_painted(surface, renderer: Renderer, row: panel_layout.Rect, l
     label — the deficit colour marks the swatch and the bar, not the text."""
     import pygame
 
-    geom = panel_layout.bar_row(row, "WATER", label, char_w=renderer._char_w_sm)
+    geom = panel_layout.bar_row(
+        row, "WATER", label, char_w=renderer._char_w_sm, measure=renderer._measure_sm
+    )
     assert geom.label == label, f"the label was truncated to {geom.label!r}"
 
     expected = pygame.Surface((geom.label_right - geom.label_x, row.h))
