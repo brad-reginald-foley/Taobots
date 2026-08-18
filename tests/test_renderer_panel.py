@@ -236,7 +236,6 @@ def test_leg_reserve_label_is_painted_whole_and_flush_right(surface, legs: int) 
     reads the surface: the drawn pixels must match a reference render of the
     full label at the layout's right-aligned position, and the rightmost ink in
     the row must be the label's, not the bar's."""
-    import pygame
 
     renderer = Renderer(surface, workshop=True)
     bot = _StubBot(legs)
@@ -258,7 +257,6 @@ def test_leg_reserve_label_is_painted_whole_and_flush_right(surface, legs: int) 
         assert geom.label == label, "the label was truncated to fit"
         assert geom.label_right <= PANEL_RIGHT
 
-        from common import DIM_WHITE
 
         _assert_text_painted(
             surface, renderer, geom.label_x, row.y, geom.label_w, row.h, label,
@@ -619,7 +617,6 @@ def _ink(surface, rect, background=PANEL_COLOR) -> set:
     edge pixels depend on surface depth and antialiasing, which differ by platform:
     on the Linux CI runner byte comparison failed while the text was correct and
     correctly positioned."""
-    import pygame
 
     return {
         (x - rect.x, y - rect.y)
@@ -657,7 +654,6 @@ def _assert_label_painted(surface, renderer: Renderer, row: panel_layout.Rect, l
 
     Rendered in `DIM_WHITE` because that is what `_draw_compact_bar_row` uses for every
     label — the deficit colour marks the swatch and the bar, not the text."""
-    import pygame
 
     geom = panel_layout.bar_row(
         row, "WATER", label, char_w=renderer._char_w_sm, measure=renderer._measure_sm
